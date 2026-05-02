@@ -69,15 +69,35 @@ User experience:
 
 This is not fully silent, but it avoids Shortcuts and avoids unsafe CloudKit writes. It is the smallest robust bridge that can be tested before signing and CloudKit changes are finalized.
 
-### Phase 2: Category export/list bridge
+### Phase 2: Manual Hermes sync button
+
+Add a refresh button on the Log screen, placed to the left of the existing filter icon.
+
+When tapped, Dime:
+
+1. Fetches a pending Hermes batch from the configured `HermesSyncURL` endpoint.
+2. Accepts either a direct batch JSON body or a wrapper containing `batch`, `importURL`, or `url`.
+3. Validates the same source/version/category/idempotency/recurrence rules as deep-link imports.
+4. Shows the same confirmation preview before writing transactions.
+5. Imports only after Sofia taps **Import**, then skips already-imported `externalId` values.
+
+The sync endpoint is intentionally configurable instead of hardcoded. It can be set by:
+
+```text
+dimeapp://configureHermesSync?url=<https-url-encoded-sync-endpoint>
+```
+
+The app requires HTTPS for this endpoint and asks Sofia to confirm the endpoint host before saving it.
+
+### Phase 3: Category export/list bridge
 
 Add a safe category export route/view so Hermes can learn Sofia's exact Dime categories before creating batches. Options:
 
 - Export categories as JSON from Settings.
 - Copy category JSON to clipboard.
-- Later, publish category IDs to a private queue if Sofia wants background sync.
+- Later, publish category IDs to the private sync queue.
 
-### Phase 3: Signed personal build
+### Phase 4: Signed personal build
 
 Prepare Sofia-owned app identifiers:
 
@@ -88,7 +108,7 @@ Prepare Sofia-owned app identifiers:
 
 The source has been moved off the original developer identifiers. Xcode still needs Sofia to choose her personal signing team and let it create/register the app identifiers before device use.
 
-### Phase 4: Hermes cron workflow
+### Phase 5: Hermes cron workflow
 
 Daily flow:
 
@@ -96,10 +116,10 @@ Daily flow:
 2. Normalize into a candidate transaction batch.
 3. Validate category names against the exported Dime category list.
 4. Generate deterministic `externalId` values.
-5. Deliver a `dimeapp://importTransactions?...` link to Sofia.
+5. Publish the pending batch to the configured Hermes sync endpoint and/or deliver a `dimeapp://importTransactions?...` fallback link to Sofia.
 6. Optional: keep a local ledger of generated/imported batch IDs.
 
-### Phase 5: Optional background queue
+### Phase 6: Optional background queue
 
 If Sofia later wants fewer taps, add a small authenticated queue and app-side polling/push trigger. The app still writes locally; no external service writes to Dime/CloudKit directly.
 
@@ -111,6 +131,7 @@ If Sofia later wants fewer taps, add a small authenticated queue and app-side po
 - Store imported `externalId` values in app-group defaults.
 - Validate `version: 1`, `source: "hermes"`, max 50 transactions, positive amounts, allowed types, existing categories, and non-recurring imports.
 - Show a confirmation preview before writing transactions.
+- Add a Log-screen refresh button that triggers manual Hermes sync from the configured HTTPS endpoint.
 - Report created/skipped/failed counts.
 
 ## Verification

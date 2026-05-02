@@ -56,6 +56,8 @@ struct LogView: View {
     // to show/hide tab bar
     var bottomEdge: CGFloat
     var launchSearch: Bool
+    var isHermesSyncing: Bool = false
+    var onHermesSync: () -> Void = {}
 
     // drag to open
 //    enum PullToReach {
@@ -92,6 +94,29 @@ struct LogView: View {
             .frame(height: 250, alignment: .top)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.PrimaryBackground)
+            .overlay(alignment: .topTrailing) {
+                Button {
+                    onHermesSync()
+                } label: {
+                    Group {
+                        if isHermesSyncing {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(.title2, design: .rounded).weight(.regular))
+                                .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                        }
+                    }
+                    .foregroundColor(Color.DarkIcon)
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+                }
+                .disabled(isHermesSyncing)
+                .accessibilityLabel("Sync Hermes Expenses")
+                .padding(.top, topEdge + 10)
+                .padding(.trailing, 25)
+            }
 
         } else {
             VStack(spacing: 0) {
@@ -141,6 +166,26 @@ struct LogView: View {
                         }
 
                         Spacer()
+
+                        Button {
+                            onHermesSync()
+                        } label: {
+                            Group {
+                                if isHermesSyncing {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(.title2, design: .rounded).weight(.regular))
+                                        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                                }
+                            }
+                            .foregroundColor(Color.DarkIcon)
+                            .frame(width: 30, height: 30)
+                            .contentShape(Rectangle())
+                        }
+                        .disabled(isHermesSyncing)
+                        .accessibilityLabel("Sync Hermes Expenses")
 
                         Button {
                             showFilter = true

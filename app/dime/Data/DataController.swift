@@ -1814,12 +1814,20 @@ struct ExternalTransactionImporter {
         return supportedHosts.contains(host)
     }
 
-    static func previewBatch(from url: URL, dataController: DataController) throws -> ExternalTransactionImportPreview {
+    static func batch(from url: URL) throws -> ExternalTransactionImportBatch {
         guard canHandle(url) else {
             throw ImportError.unsupportedURL
         }
 
-        let batch = try decodeBatch(from: url)
+        return try decodeBatch(from: url)
+    }
+
+    static func previewBatch(from url: URL, dataController: DataController) throws -> ExternalTransactionImportPreview {
+        let batch = try batch(from: url)
+        return try previewBatch(batch, dataController: dataController)
+    }
+
+    static func previewBatch(_ batch: ExternalTransactionImportBatch, dataController: DataController) throws -> ExternalTransactionImportPreview {
         try validateBatchEnvelope(batch)
 
         let importedIds = importedExternalIds()
@@ -1847,11 +1855,11 @@ struct ExternalTransactionImporter {
     }
 
     static func importBatch(from url: URL, dataController: DataController) throws -> ExternalTransactionImportResult {
-        guard canHandle(url) else {
-            throw ImportError.unsupportedURL
-        }
+        let batch = try batch(from: url)
+        return try importBatch(batch, dataController: dataController)
+    }
 
-        let batch = try decodeBatch(from: url)
+    static func importBatch(_ batch: ExternalTransactionImportBatch, dataController: DataController) throws -> ExternalTransactionImportResult {
         try validateBatchEnvelope(batch)
 
         var importedIds = importedExternalIds()
@@ -2074,6 +2082,143 @@ struct ExternalTransactionImporter {
         }
 
         throw ImportError.invalidDate(rawValue)
+    }
+}
+
+struct HermesTransactionSyncClient {
+    private static let syncURLKey = "hermesSyncURL"
+    private static let infoPlistSyncURLKey = "HermesSyncURL"
+    private static let configurationHost = "configureHermesSync"
+
+    private struct SyncResponseEnvelope: Decodable {
+        let batch: ExternalTransactionImportBatch?
+        let importURL: String?
+        let url: String?
+    }
+
+    private enum SyncError: LocalizedError {
+        case missingEndpoint
+        case invalidEndpoint(String)
+        case insecureEndpoint
+        case httpStatus(Int)
+        case invalidResponse
+
+        var errorDescription: String? {
+            switch self {
+            case .missingEndpoint:
+                return "Hermes sync is not configured yet. Open a Hermes setup link first."
+            case let .invalidEndpoint(value):
+                return "Hermes sync endpoint is invalid: \(value)."
+            case .insecureEndpoint:
+                return "Hermes sync endpoint must use HTTPS."
+            case let .httpStatus(statusCode):
+                return "Hermes sync failed with status \(statusCode)."
+            case .invalidResponse:
+                return "Hermes sync returned data Dime could not read."
+            }
+        }
+    }
+
+    static func canHandleConfiguration(_ url: URL) -> Bool {
+        return url.scheme == "dimeapp" && url.host == configurationHost
+    }
+
+    @discardableResult
+    static func configure(from url: URL) throws -> URL {
+        let syncURL = try endpoint(fromConfigurationURL: url)
+        configure(endpoint: syncURL)
+        return syncURL
+    }
+
+    static func endpoint(fromConfigurationURL url: URL) throws -> URL {
+        guard canHandleConfiguration(url) else {
+            throw SyncError.invalidEndpoint(url.absoluteString)
+        }
+
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        guard let rawURL = components?.queryItems?.first(where: { $0.name == "url" })?.value else {
+            throw SyncError.missingEndpoint
+        }
+
+        return try validateEndpoint(rawURL)
+    }
+
+    static func configure(endpoint syncURL: URL) {
+        syncDefaults().set(syncURL.absoluteString, forKey: syncURLKey)
+    }
+
+    static func fetchPendingBatch() async throws -> ExternalTransactionImportBatch {
+        let syncURL = try configuredEndpoint()
+        var request = URLRequest(url: syncURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SyncError.invalidResponse
+        }
+
+        if httpResponse.statusCode == 204 {
+            return ExternalTransactionImportBatch(version: 1, source: "hermes", transactions: [])
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw SyncError.httpStatus(httpResponse.statusCode)
+        }
+
+        return try decodeBatch(from: data)
+    }
+
+    private static func configuredEndpoint() throws -> URL {
+        if let storedURL = syncDefaults().string(forKey: syncURLKey), !storedURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return try validateEndpoint(storedURL)
+        }
+
+        if let bundledURL = Bundle.main.object(forInfoDictionaryKey: infoPlistSyncURLKey) as? String,
+           !bundledURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return try validateEndpoint(bundledURL)
+        }
+
+        throw SyncError.missingEndpoint
+    }
+
+    private static func validateEndpoint(_ rawURL: String) throws -> URL {
+        let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), let scheme = url.scheme, let host = url.host, !host.isEmpty else {
+            throw SyncError.invalidEndpoint(rawURL)
+        }
+
+        guard scheme.lowercased() == "https" else {
+            throw SyncError.insecureEndpoint
+        }
+
+        return url
+    }
+
+    private static func decodeBatch(from data: Data) throws -> ExternalTransactionImportBatch {
+        let decoder = JSONDecoder()
+
+        if let batch = try? decoder.decode(ExternalTransactionImportBatch.self, from: data) {
+            return batch
+        }
+
+        if let envelope = try? decoder.decode(SyncResponseEnvelope.self, from: data) {
+            if let batch = envelope.batch {
+                return batch
+            }
+
+            if let rawURL = envelope.importURL ?? envelope.url,
+               let importURL = URL(string: rawURL) {
+                return try ExternalTransactionImporter.batch(from: importURL)
+            }
+        }
+
+        throw SyncError.invalidResponse
+    }
+
+    private static func syncDefaults() -> UserDefaults {
+        return UserDefaults(suiteName: "group.com.sofitucci.dime") ?? UserDefaults.standard
     }
 }
 

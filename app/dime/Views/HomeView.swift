@@ -48,10 +48,15 @@ struct HomeView: View {
     @State var launchSearch: Bool = false
 
     @State private var pendingExternalImportURL: URL?
+    @State private var pendingHermesSyncConfigurationURL: URL?
     @State private var confirmedExternalImportURL: URL?
+    @State private var confirmedExternalImportBatch: ExternalTransactionImportBatch?
+    @State private var pendingHermesSyncEndpoint: URL?
     @State private var externalImportMessage = ""
     @State private var showExternalImportAlert = false
     @State private var showExternalImportConfirmation = false
+    @State private var showHermesSyncConfigurationConfirmation = false
+    @State private var isHermesSyncing = false
 
     @State var counter = 0
 
@@ -69,7 +74,13 @@ struct HomeView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             TabView(selection: $currentTab) {
-                LogView(topEdge: topEdge, bottomEdge: bottomEdge, launchSearch: launchSearch)
+                LogView(
+                    topEdge: topEdge,
+                    bottomEdge: bottomEdge,
+                    launchSearch: launchSearch,
+                    isHermesSyncing: isHermesSyncing,
+                    onHermesSync: syncHermesTransactions
+                )
                     .ignoresSafeArea(.all)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .tag("Log")
@@ -114,6 +125,8 @@ struct HomeView: View {
 
                         if ExternalTransactionImporter.canHandle(url) {
                             pendingExternalImportURL = url
+                        } else if HermesTransactionSyncClient.canHandleConfiguration(url) {
+                            pendingHermesSyncConfigurationURL = url
                         } else if url.host == "newExpense" {
                             fromURL1 = true
                         } else if url.host == "search" {
@@ -183,15 +196,27 @@ struct HomeView: View {
         }
         .onChange(of: appLockVM.isAppUnLocked) { isUnlocked in
             if isUnlocked {
+                handlePendingHermesSyncConfiguration()
                 handlePendingExternalImport()
             }
         }
         .alert("Import Dime Transactions?", isPresented: $showExternalImportConfirmation) {
             Button("Cancel", role: .cancel) {
                 confirmedExternalImportURL = nil
+                confirmedExternalImportBatch = nil
             }
             Button("Import") {
                 confirmExternalTransactionImport()
+            }
+        } message: {
+            Text(externalImportMessage)
+        }
+        .alert("Connect Hermes Sync?", isPresented: $showHermesSyncConfigurationConfirmation) {
+            Button("Cancel", role: .cancel) {
+                pendingHermesSyncEndpoint = nil
+            }
+            Button("Connect") {
+                confirmHermesSyncConfiguration()
             }
         } message: {
             Text(externalImportMessage)
@@ -214,6 +239,16 @@ struct HomeView: View {
             return
         }
 
+        if HermesTransactionSyncClient.canHandleConfiguration(url) {
+            if appLockVM.isAppLockEnabled && !appLockVM.isAppUnLocked {
+                pendingHermesSyncConfigurationURL = url
+                return
+            }
+
+            handleHermesSyncConfiguration(url)
+            return
+        }
+
         if url.host == "search" {
             currentTab = "Log"
         } else if url.host == "insights" {
@@ -232,9 +267,73 @@ struct HomeView: View {
         handleExternalTransactionImport(url)
     }
 
+    private func handlePendingHermesSyncConfiguration() {
+        guard let url = pendingHermesSyncConfigurationURL else {
+            return
+        }
+
+        pendingHermesSyncConfigurationURL = nil
+        handleHermesSyncConfiguration(url)
+    }
+
+    private func handleHermesSyncConfiguration(_ url: URL) {
+        do {
+            let syncEndpoint = try HermesTransactionSyncClient.endpoint(fromConfigurationURL: url)
+            pendingHermesSyncEndpoint = syncEndpoint
+            externalImportMessage = "Connect Dime to Hermes sync at \(syncEndpoint.host ?? "this endpoint")? Only connect if this setup link came from Sofia's Hermes chat."
+            showHermesSyncConfigurationConfirmation = true
+        } catch {
+            externalImportMessage = error.localizedDescription
+            showExternalImportAlert = true
+        }
+    }
+
+    private func confirmHermesSyncConfiguration() {
+        guard let syncEndpoint = pendingHermesSyncEndpoint else {
+            return
+        }
+
+        pendingHermesSyncEndpoint = nil
+        HermesTransactionSyncClient.configure(endpoint: syncEndpoint)
+        externalImportMessage = "Hermes sync is connected. Tap the refresh icon on the Log screen to import pending expenses."
+        showExternalImportAlert = true
+    }
+
+    private func syncHermesTransactions() {
+        guard !isHermesSyncing else {
+            return
+        }
+
+        if appLockVM.isAppLockEnabled && !appLockVM.isAppUnLocked {
+            externalImportMessage = "Unlock Dime before syncing Hermes expenses."
+            showExternalImportAlert = true
+            return
+        }
+
+        isHermesSyncing = true
+
+        Task {
+            do {
+                let batch = try await HermesTransactionSyncClient.fetchPendingBatch()
+
+                await MainActor.run {
+                    isHermesSyncing = false
+                    handleExternalTransactionImport(batch)
+                }
+            } catch {
+                await MainActor.run {
+                    isHermesSyncing = false
+                    externalImportMessage = error.localizedDescription
+                    showExternalImportAlert = true
+                }
+            }
+        }
+    }
+
     private func handleExternalTransactionImport(_ url: URL) {
         do {
             let preview = try ExternalTransactionImporter.previewBatch(from: url, dataController: dataController)
+            confirmedExternalImportBatch = nil
             confirmedExternalImportURL = url
             externalImportMessage = preview.message
             showExternalImportConfirmation = true
@@ -244,15 +343,42 @@ struct HomeView: View {
         }
     }
 
-    private func confirmExternalTransactionImport() {
-        guard let url = confirmedExternalImportURL else {
-            return
-        }
+    private func handleExternalTransactionImport(_ batch: ExternalTransactionImportBatch) {
+        do {
+            let preview = try ExternalTransactionImporter.previewBatch(batch, dataController: dataController)
 
-        confirmedExternalImportURL = nil
+            guard preview.total > 0 else {
+                confirmedExternalImportBatch = nil
+                confirmedExternalImportURL = nil
+                externalImportMessage = "No pending Hermes expenses to import."
+                showExternalImportAlert = true
+                return
+            }
+
+            confirmedExternalImportURL = nil
+            confirmedExternalImportBatch = batch
+            externalImportMessage = preview.message
+            showExternalImportConfirmation = true
+        } catch {
+            externalImportMessage = error.localizedDescription
+            showExternalImportAlert = true
+        }
+    }
+
+    private func confirmExternalTransactionImport() {
+        let result: ExternalTransactionImportResult
 
         do {
-            let result = try ExternalTransactionImporter.importBatch(from: url, dataController: dataController)
+            if let url = confirmedExternalImportURL {
+                confirmedExternalImportURL = nil
+                result = try ExternalTransactionImporter.importBatch(from: url, dataController: dataController)
+            } else if let batch = confirmedExternalImportBatch {
+                confirmedExternalImportBatch = nil
+                result = try ExternalTransactionImporter.importBatch(batch, dataController: dataController)
+            } else {
+                return
+            }
+
             externalImportMessage = result.message
         } catch {
             externalImportMessage = error.localizedDescription
