@@ -11,22 +11,22 @@ import SwiftUI
 struct SettingsGoofyView: View {
   @Environment(\.presentationMode) var presentationMode: Binding<PresentationMode>
 
-  @AppStorage("confetti", store: UserDefaults(suiteName: "group.com.rafaelsoh.dime")) var confetti:
+  @AppStorage("confetti", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var confetti:
     Bool = false
 
-  //    @AppStorage("chromatic", store: UserDefaults(suiteName: "group.com.rafaelsoh.dime")) var chromatic: Bool = false
+  //    @AppStorage("chromatic", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var chromatic: Bool = false
 
-  @AppStorage("logViewLineGraph", store: UserDefaults(suiteName: "group.com.rafaelsoh.dime"))
+  @AppStorage("logViewLineGraph", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
   var lineGraph: Bool = false
 
-  @AppStorage("budgetViewStyle", store: UserDefaults(suiteName: "group.com.rafaelsoh.dime"))
+  @AppStorage("budgetViewStyle", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
   var budgetRows: Bool = false
 
-  @AppStorage("swapTimeLabel", store: UserDefaults(suiteName: "group.com.rafaelsoh.dime"))
+  @AppStorage("swapTimeLabel", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
   var swapTimeLabel: Bool = false
 
   @AppStorage(
-    "showTransactionRecommendations", store: UserDefaults(suiteName: "group.com.rafaelsoh.dime"))
+    "showTransactionRecommendations", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
   var showRecommendations: Bool = false
 
   @Namespace var animation

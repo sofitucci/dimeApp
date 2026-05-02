@@ -81,12 +81,12 @@ Add a safe category export route/view so Hermes can learn Sofia's exact Dime cat
 
 Prepare Sofia-owned app identifiers:
 
-- Bundle ID: Sofia-owned variant, not `com.rafaelsoh.dime`.
-- App group: Sofia-owned variant.
-- CloudKit container: Sofia-owned variant.
+- Bundle ID: `com.sofitucci.dime`.
+- App group: `group.com.sofitucci.dime`.
+- CloudKit container: `iCloud.com.sofitucci.dime`.
 - Signing team: Sofia's personal Apple Developer account/team.
 
-Existing source currently references `iCloud.com.rafaelsoh.dime` and `group.com.rafaelsoh.dime`; these must be parameterized or replaced before device use.
+The source has been moved off the original developer identifiers. Xcode still needs Sofia to choose her personal signing team and let it create/register the app identifiers before device use.
 
 ### Phase 4: Hermes cron workflow
 
