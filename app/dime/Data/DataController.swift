@@ -1670,6 +1670,413 @@ class DataController: ObservableObject {
     }
 }
 
+struct ExternalTransactionImportBatch: Decodable {
+    let version: Int?
+    let source: String?
+    let transactions: [ExternalTransactionImportItem]
+}
+
+struct ExternalTransactionImportItem: Decodable {
+    let externalId: String
+    let date: String
+    let amount: Double
+    let type: String?
+    let income: Bool?
+    let categoryId: String?
+    let category: String?
+    let note: String?
+    let repeatType: Int?
+    let repeatCoefficient: Int?
+}
+
+struct ExternalTransactionImportResult {
+    let created: Int
+    let skipped: Int
+    let failures: [String]
+
+    var message: String {
+        var lines = [String]()
+        lines.append("Created \(created) transaction\(created == 1 ? "" : "s").")
+
+        if skipped > 0 {
+            lines.append("Skipped \(skipped) duplicate\(skipped == 1 ? "" : "s").")
+        }
+
+        if !failures.isEmpty {
+            lines.append("Failed \(failures.count) row\(failures.count == 1 ? "" : "s"):")
+            lines.append(contentsOf: failures.prefix(5))
+
+            if failures.count > 5 {
+                lines.append("…and \(failures.count - 5) more.")
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+}
+
+struct ExternalTransactionImportPreview {
+    let total: Int
+    let ready: Int
+    let skipped: Int
+    let failures: [String]
+
+    var message: String {
+        var lines = [String]()
+        lines.append("This link wants to import \(total) transaction\(total == 1 ? "" : "s").")
+        lines.append("Ready: \(ready).")
+
+        if skipped > 0 {
+            lines.append("Already imported: \(skipped).")
+        }
+
+        if !failures.isEmpty {
+            lines.append("Cannot import \(failures.count) row\(failures.count == 1 ? "" : "s"):")
+            lines.append(contentsOf: failures.prefix(5))
+
+            if failures.count > 5 {
+                lines.append("…and \(failures.count - 5) more.")
+            }
+        }
+
+        lines.append("Only tap Import if this came from Sofia's Hermes chat.")
+        return lines.joined(separator: "\n")
+    }
+}
+
+struct ExternalTransactionImporter {
+    private static let importedIdsKey = "externalTransactionImportIds"
+    private static let maxTransactionsPerBatch = 50
+    private static let trustedSource = "hermes"
+    private static let supportedHosts: Set<String> = ["import", "importTransactions"]
+
+    private struct PreparedImportItem {
+        let externalId: String
+        let note: String
+        let category: Category
+        let income: Bool
+        let amount: Double
+        let date: Date
+    }
+
+    private enum ImportError: LocalizedError {
+        case unsupportedURL
+        case missingPayload
+        case invalidPayload
+        case unsupportedVersion(Int?)
+        case untrustedSource(String?)
+        case tooManyTransactions(Int)
+        case missingExternalId
+        case invalidAmount(Double)
+        case invalidType(String)
+        case missingCategory
+        case categoryNotFound(String)
+        case invalidDate(String)
+        case recurringImportsNotAllowed
+
+        var errorDescription: String? {
+            switch self {
+            case .unsupportedURL:
+                return "This Dime link is not an external transaction import."
+            case .missingPayload:
+                return "The import link is missing a payload."
+            case .invalidPayload:
+                return "The import payload could not be decoded."
+            case let .unsupportedVersion(version):
+                return "Unsupported import version: \(version.map(String.init) ?? "missing")."
+            case let .untrustedSource(source):
+                return "Unsupported import source: \(source ?? "missing")."
+            case let .tooManyTransactions(count):
+                return "Too many transactions in one import: \(count)."
+            case .missingExternalId:
+                return "Missing externalId."
+            case let .invalidAmount(amount):
+                return "Invalid amount: \(amount)."
+            case let .invalidType(type):
+                return "Invalid transaction type: \(type)."
+            case .missingCategory:
+                return "Missing categoryId or category."
+            case let .categoryNotFound(category):
+                return "No matching Dime category: \(category)."
+            case let .invalidDate(date):
+                return "Invalid date: \(date)."
+            case .recurringImportsNotAllowed:
+                return "Recurring imports are not allowed from external links."
+            }
+        }
+    }
+
+    static func canHandle(_ url: URL) -> Bool {
+        guard url.scheme == "dimeapp", let host = url.host else {
+            return false
+        }
+
+        return supportedHosts.contains(host)
+    }
+
+    static func previewBatch(from url: URL, dataController: DataController) throws -> ExternalTransactionImportPreview {
+        guard canHandle(url) else {
+            throw ImportError.unsupportedURL
+        }
+
+        let batch = try decodeBatch(from: url)
+        try validateBatchEnvelope(batch)
+
+        let importedIds = importedExternalIds()
+        var ready = 0
+        var skipped = 0
+        var failures = [String]()
+
+        for (index, item) in batch.transactions.enumerated() {
+            let rowLabel = label(for: item, index: index)
+
+            do {
+                let prepared = try prepare(item, dataController: dataController)
+
+                if importedIds.contains(prepared.externalId) {
+                    skipped += 1
+                } else {
+                    ready += 1
+                }
+            } catch {
+                failures.append("\(rowLabel): \(error.localizedDescription)")
+            }
+        }
+
+        return ExternalTransactionImportPreview(total: batch.transactions.count, ready: ready, skipped: skipped, failures: failures)
+    }
+
+    static func importBatch(from url: URL, dataController: DataController) throws -> ExternalTransactionImportResult {
+        guard canHandle(url) else {
+            throw ImportError.unsupportedURL
+        }
+
+        let batch = try decodeBatch(from: url)
+        try validateBatchEnvelope(batch)
+
+        var importedIds = importedExternalIds()
+        var created = 0
+        var skipped = 0
+        var failures = [String]()
+
+        for (index, item) in batch.transactions.enumerated() {
+            let rowLabel = label(for: item, index: index)
+
+            do {
+                let prepared = try prepare(item, dataController: dataController)
+
+                if importedIds.contains(prepared.externalId) {
+                    skipped += 1
+                    continue
+                }
+
+                _ = dataController.newTransaction(
+                    note: prepared.note,
+                    category: prepared.category,
+                    income: prepared.income,
+                    amount: prepared.amount,
+                    date: prepared.date,
+                    repeatType: 0,
+                    repeatCoefficient: 1,
+                    delay: false
+                )
+
+                importedIds.insert(prepared.externalId)
+                created += 1
+            } catch {
+                failures.append("\(rowLabel): \(error.localizedDescription)")
+            }
+        }
+
+        importDefaults().set(Array(importedIds).sorted(), forKey: importedIdsKey)
+
+        return ExternalTransactionImportResult(created: created, skipped: skipped, failures: failures)
+    }
+
+    private static func validateBatchEnvelope(_ batch: ExternalTransactionImportBatch) throws {
+        guard batch.version == 1 else {
+            throw ImportError.unsupportedVersion(batch.version)
+        }
+
+        let source = batch.source?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard source == trustedSource else {
+            throw ImportError.untrustedSource(batch.source)
+        }
+
+        guard batch.transactions.count <= maxTransactionsPerBatch else {
+            throw ImportError.tooManyTransactions(batch.transactions.count)
+        }
+    }
+
+    private static func label(for item: ExternalTransactionImportItem, index: Int) -> String {
+        let externalId = item.externalId.trimmingCharacters(in: .whitespacesAndNewlines)
+        return externalId.isEmpty ? "Row \(index + 1)" : externalId
+    }
+
+    private static func importedExternalIds() -> Set<String> {
+        return Set(importDefaults().stringArray(forKey: importedIdsKey) ?? [])
+    }
+
+    private static func importDefaults() -> UserDefaults {
+        return UserDefaults(suiteName: "group.com.rafaelsoh.dime") ?? UserDefaults.standard
+    }
+
+    private static func prepare(_ item: ExternalTransactionImportItem, dataController: DataController) throws -> PreparedImportItem {
+        let externalId = item.externalId.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !externalId.isEmpty else {
+            throw ImportError.missingExternalId
+        }
+
+        guard item.amount > 0 else {
+            throw ImportError.invalidAmount(item.amount)
+        }
+
+        if (item.repeatType ?? 0) != 0 || (item.repeatCoefficient ?? 1) != 1 {
+            throw ImportError.recurringImportsNotAllowed
+        }
+
+        let income = try incomeFlag(for: item)
+        let category = try findCategory(for: item, income: income, dataController: dataController)
+        let date = try parseDate(item.date)
+
+        return PreparedImportItem(
+            externalId: externalId,
+            note: item.note ?? "",
+            category: category,
+            income: income,
+            amount: item.amount,
+            date: date
+        )
+    }
+
+    private static func decodeBatch(from url: URL) throws -> ExternalTransactionImportBatch {
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let payload = components?.queryItems?.first(where: { $0.name == "payload" })?.value
+        let json = components?.queryItems?.first(where: { $0.name == "json" })?.value
+        let data: Data
+
+        if let payload = payload {
+            data = try decodeBase64URL(payload)
+        } else if let json = json {
+            data = Data(json.utf8)
+        } else {
+            throw ImportError.missingPayload
+        }
+
+        do {
+            return try JSONDecoder().decode(ExternalTransactionImportBatch.self, from: data)
+        } catch {
+            throw ImportError.invalidPayload
+        }
+    }
+
+    private static func decodeBase64URL(_ value: String) throws -> Data {
+        var base64 = value
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+
+        let padding = base64.count % 4
+
+        if padding > 0 {
+            base64.append(String(repeating: "=", count: 4 - padding))
+        }
+
+        guard let data = Data(base64Encoded: base64) else {
+            throw ImportError.invalidPayload
+        }
+
+        return data
+    }
+
+    private static func incomeFlag(for item: ExternalTransactionImportItem) throws -> Bool {
+        let rawType = item.type?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let incomeFromType: Bool?
+
+        switch rawType {
+        case nil, "":
+            incomeFromType = nil
+        case "expense":
+            incomeFromType = false
+        case "income":
+            incomeFromType = true
+        default:
+            throw ImportError.invalidType(rawType ?? "")
+        }
+
+        if let income = item.income {
+            if let incomeFromType = incomeFromType, incomeFromType != income {
+                throw ImportError.invalidType(rawType ?? "income mismatch")
+            }
+
+            return income
+        }
+
+        return incomeFromType ?? false
+    }
+
+    private static func findCategory(for item: ExternalTransactionImportItem, income: Bool, dataController: DataController) throws -> Category {
+        let context = dataController.container.viewContext
+
+        if let categoryId = item.categoryId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !categoryId.isEmpty,
+           let uuid = UUID(uuidString: categoryId) {
+            let request: NSFetchRequest<Category> = Category.fetchRequest()
+            request.fetchLimit = 1
+            request.predicate = NSPredicate(format: "id = %@ AND income = %d", uuid as CVarArg, income)
+
+            if let category = try? context.fetch(request).first {
+                return category
+            }
+
+            throw ImportError.categoryNotFound(categoryId)
+        }
+
+        guard let categoryName = item.category?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !categoryName.isEmpty else {
+            throw ImportError.missingCategory
+        }
+
+        let request: NSFetchRequest<Category> = Category.fetchRequest()
+        request.fetchLimit = 1
+        request.predicate = NSPredicate(format: "name = %@ AND income = %d", categoryName, income)
+
+        if let category = try? context.fetch(request).first {
+            return category
+        }
+
+        throw ImportError.categoryNotFound(categoryName)
+    }
+
+    private static func parseDate(_ rawValue: String) throws -> Date {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fractionalISOFormatter = ISO8601DateFormatter()
+        fractionalISOFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        if let date = fractionalISOFormatter.date(from: trimmed) {
+            return date
+        }
+
+        let isoFormatter = ISO8601DateFormatter()
+
+        if let date = isoFormatter.date(from: trimmed) {
+            return date
+        }
+
+        let dateOnlyFormatter = DateFormatter()
+        dateOnlyFormatter.calendar = Calendar(identifier: .gregorian)
+        dateOnlyFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateOnlyFormatter.timeZone = .current
+        dateOnlyFormatter.dateFormat = "yyyy-MM-dd"
+
+        if let date = dateOnlyFormatter.date(from: trimmed) {
+            return date
+        }
+
+        throw ImportError.invalidDate(rawValue)
+    }
+}
+
 public extension NSManagedObjectContext {
     func executeAndMergeChanges(using batchDeleteRequest: NSBatchDeleteRequest) throws {
         batchDeleteRequest.resultType = .resultTypeObjectIDs

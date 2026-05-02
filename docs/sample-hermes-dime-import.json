@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "hermes",
+  "transactions": [
+    {
+      "externalId": "example-2026-05-01-0001",
+      "date": "2026-05-01",
+      "amount": 123.45,
+      "type": "expense",
+      "category": "Groceries",
+      "note": "Example expense"
+    }
+  ]
+}

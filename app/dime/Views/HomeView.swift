@@ -47,6 +47,12 @@ struct HomeView: View {
     @State var launchAdd: Bool = false
     @State var launchSearch: Bool = false
 
+    @State private var pendingExternalImportURL: URL?
+    @State private var confirmedExternalImportURL: URL?
+    @State private var externalImportMessage = ""
+    @State private var showExternalImportAlert = false
+    @State private var showExternalImportConfirmation = false
+
     @State var counter = 0
 
     @EnvironmentObject var tabBarManager: TabBarManager
@@ -106,7 +112,9 @@ struct HomeView: View {
                     .ignoresSafeArea(.all)
                     .onOpenURL { url in
 
-                        if url.host == "newExpense" {
+                        if ExternalTransactionImporter.canHandle(url) {
+                            pendingExternalImportURL = url
+                        } else if url.host == "newExpense" {
                             fromURL1 = true
                         } else if url.host == "search" {
                             fromURL2 = true
@@ -171,14 +179,86 @@ struct HomeView: View {
             }
         }
         .onOpenURL { url in
-            if url.host == "search" {
-                currentTab = "Log"
-            } else if url.host == "insights" {
-                currentTab = "Insights"
-            } else if url.host == "budget" {
-                currentTab = "Budget"
+            handleURL(url)
+        }
+        .onChange(of: appLockVM.isAppUnLocked) { isUnlocked in
+            if isUnlocked {
+                handlePendingExternalImport()
             }
         }
+        .alert("Import Dime Transactions?", isPresented: $showExternalImportConfirmation) {
+            Button("Cancel", role: .cancel) {
+                confirmedExternalImportURL = nil
+            }
+            Button("Import") {
+                confirmExternalTransactionImport()
+            }
+        } message: {
+            Text(externalImportMessage)
+        }
+        .alert("Dime Import", isPresented: $showExternalImportAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(externalImportMessage)
+        }
+    }
+
+    private func handleURL(_ url: URL) {
+        if ExternalTransactionImporter.canHandle(url) {
+            if appLockVM.isAppLockEnabled && !appLockVM.isAppUnLocked {
+                pendingExternalImportURL = url
+                return
+            }
+
+            handleExternalTransactionImport(url)
+            return
+        }
+
+        if url.host == "search" {
+            currentTab = "Log"
+        } else if url.host == "insights" {
+            currentTab = "Insights"
+        } else if url.host == "budget" {
+            currentTab = "Budget"
+        }
+    }
+
+    private func handlePendingExternalImport() {
+        guard let url = pendingExternalImportURL else {
+            return
+        }
+
+        pendingExternalImportURL = nil
+        handleExternalTransactionImport(url)
+    }
+
+    private func handleExternalTransactionImport(_ url: URL) {
+        do {
+            let preview = try ExternalTransactionImporter.previewBatch(from: url, dataController: dataController)
+            confirmedExternalImportURL = url
+            externalImportMessage = preview.message
+            showExternalImportConfirmation = true
+        } catch {
+            externalImportMessage = error.localizedDescription
+            showExternalImportAlert = true
+        }
+    }
+
+    private func confirmExternalTransactionImport() {
+        guard let url = confirmedExternalImportURL else {
+            return
+        }
+
+        confirmedExternalImportURL = nil
+
+        do {
+            let result = try ExternalTransactionImporter.importBatch(from: url, dataController: dataController)
+            externalImportMessage = result.message
+        } catch {
+            externalImportMessage = error.localizedDescription
+        }
+
+        showExternalImportAlert = true
     }
 }
 
