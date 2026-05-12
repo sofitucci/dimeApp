@@ -1703,6 +1703,12 @@ struct ExternalTransactionImportItem: Decodable {
     let note: String?
     let repeatType: Int?
     let repeatCoefficient: Int?
+    let currency: String?
+    let convertedAmount: Double?
+    let convertedCurrency: String?
+    let exchangeRate: Double?
+    let exchangeRateDate: String?
+    let exchangeRateSource: String?
 }
 
 struct ExternalTransactionImportResult {
@@ -1773,6 +1779,13 @@ struct ExternalTransactionImporter {
         let income: Bool
         let amount: Double
         let date: Date
+        let originalAmount: Double?
+        let originalCurrency: String?
+        let convertedAmount: Double?
+        let convertedCurrency: String?
+        let exchangeRate: Double?
+        let exchangeRateDate: Date?
+        let exchangeRateSource: String?
     }
 
     private enum ImportError: LocalizedError {
@@ -1897,7 +1910,7 @@ struct ExternalTransactionImporter {
                     continue
                 }
 
-                _ = dataController.newTransaction(
+                let transaction = dataController.newTransaction(
                     note: prepared.note,
                     category: prepared.category,
                     income: prepared.income,
@@ -1907,6 +1920,21 @@ struct ExternalTransactionImporter {
                     repeatCoefficient: 1,
                     delay: false
                 )
+
+                if let originalAmount = prepared.originalAmount {
+                    transaction.originalAmount = originalAmount
+                }
+                transaction.originalCurrency = prepared.originalCurrency
+                if let convertedAmount = prepared.convertedAmount {
+                    transaction.convertedAmount = convertedAmount
+                }
+                transaction.convertedCurrency = prepared.convertedCurrency
+                if let exchangeRate = prepared.exchangeRate {
+                    transaction.exchangeRate = exchangeRate
+                }
+                transaction.exchangeRateDate = prepared.exchangeRateDate
+                transaction.exchangeRateSource = prepared.exchangeRateSource
+                dataController.save()
 
                 importedIds.insert(prepared.externalId)
                 created += 1
@@ -1966,15 +1994,87 @@ struct ExternalTransactionImporter {
         let income = try incomeFlag(for: item)
         let category = try findCategory(for: item, income: income, dataController: dataController)
         let date = try parseDate(item.date)
+        let importDetails = importAmountDetails(for: item)
 
         return PreparedImportItem(
             externalId: externalId,
             note: item.note ?? "",
             category: category,
             income: income,
-            amount: item.amount,
-            date: date
+            amount: importDetails.amount,
+            date: date,
+            originalAmount: importDetails.originalAmount,
+            originalCurrency: importDetails.originalCurrency,
+            convertedAmount: importDetails.convertedAmount,
+            convertedCurrency: importDetails.convertedCurrency,
+            exchangeRate: importDetails.exchangeRate,
+            exchangeRateDate: importDetails.exchangeRateDate,
+            exchangeRateSource: importDetails.exchangeRateSource
         )
+    }
+
+    private static func importAmountDetails(for item: ExternalTransactionImportItem) -> (
+        amount: Double,
+        originalAmount: Double?,
+        originalCurrency: String?,
+        convertedAmount: Double?,
+        convertedCurrency: String?,
+        exchangeRate: Double?,
+        exchangeRateDate: Date?,
+        exchangeRateSource: String?
+    ) {
+        let sourceCurrency = normalizedCurrency(item.currency)
+        let convertedCurrency = normalizedCurrency(item.convertedCurrency)
+        let targetCurrency = appCurrencyCode()
+        let convertedAmount = validPositiveAmount(item.convertedAmount)
+        var selectedAmount = item.amount
+
+        if let convertedAmount,
+           let convertedCurrency,
+           convertedCurrency == targetCurrency,
+           sourceCurrency != targetCurrency {
+            selectedAmount = convertedAmount
+        }
+
+        let rateDate = item.exchangeRateDate.flatMap { try? parseDate($0) }
+        let sourceAmount = sourceCurrency == nil ? nil : item.amount
+
+        return (
+            amount: selectedAmount,
+            originalAmount: sourceAmount,
+            originalCurrency: sourceCurrency,
+            convertedAmount: convertedAmount,
+            convertedCurrency: convertedCurrency,
+            exchangeRate: validPositiveAmount(item.exchangeRate),
+            exchangeRateDate: rateDate,
+            exchangeRateSource: item.exchangeRateSource?.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    private static func normalizedCurrency(_ rawValue: String?) -> String? {
+        guard let currency = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
+              !currency.isEmpty else {
+            return nil
+        }
+
+        return currency
+    }
+
+    private static func validPositiveAmount(_ value: Double?) -> Double? {
+        guard let value, value > 0, value.isFinite else {
+            return nil
+        }
+
+        return value
+    }
+
+    private static func appCurrencyCode() -> String {
+        let stored = DimeDefaults.shared.string(forKey: "currency")?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if let stored, !stored.isEmpty {
+            return stored
+        }
+
+        return Locale.current.currencyCode?.uppercased() ?? "UYU"
     }
 
     private static func decodeBatch(from url: URL) throws -> ExternalTransactionImportBatch {

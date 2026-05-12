@@ -18,6 +18,8 @@ DATA_CONTROLLER = ROOT / "app/dime/Data/DataController.swift"
 CATEGORY_VIEW = ROOT / "app/dime/Views/CategoryView.swift"
 ENTITLEMENTS = ROOT / "app/dime/dime.entitlements"
 INFO_PLIST = ROOT / "app/dime/Info.plist"
+MODEL_DIR = ROOT / "app/dime/Data/MainModel.xcdatamodeld"
+XCODE_PROJECT = ROOT / "app/dime.xcodeproj/project.pbxproj"
 
 
 def active_swift(source: str) -> str:
@@ -89,6 +91,23 @@ def main() -> None:
     assert_true(
         "cloudKitContainerOptions" not in active,
         "Local build should not enable CloudKit store options.",
+    )
+    assert_true(
+        "description.shouldMigrateStoreAutomatically = true" in active
+        and "description.shouldInferMappingModelAutomatically = true" in active,
+        "Core Data model updates must use lightweight migration so installed apps update in place instead of acting like fresh installs.",
+    )
+    assert_true(
+        (MODEL_DIR / "MainModel 2.xcdatamodel/contents").exists()
+        and (MODEL_DIR / "MainModel 3.xcdatamodel/contents").exists(),
+        "Keep both MainModel 2 and MainModel 3 in the model bundle so existing stores can migrate.",
+    )
+    current_version = (MODEL_DIR / ".xccurrentversion").read_text()
+    project_source = XCODE_PROJECT.read_text()
+    assert_true(
+        "MainModel 3.xcdatamodel" in current_version
+        and "currentVersion = D6C0FFEE2E01010100F7F751 /* MainModel 3.xcdatamodel */;" in project_source,
+        "MainModel 3 must be the current model version while preserving prior model versions for migration.",
     )
 
     assert_true(

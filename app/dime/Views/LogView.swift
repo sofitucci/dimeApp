@@ -1275,10 +1275,10 @@ struct SingleTransactionView: View {
         return min(1, 1 + (abs(Double(offset) + 40) / 100))
     }
 
-    var transactionAmountString: String {
+    private func formattedAmount(_ amount: Double, currencyCode: String) -> String {
         let numberFormatter = NumberFormatter()
         numberFormatter.numberStyle = .currency
-        numberFormatter.currencyCode = currency
+        numberFormatter.currencyCode = currencyCode
 
         if showCents {
             numberFormatter.maximumFractionDigits = 2
@@ -1286,7 +1286,57 @@ struct SingleTransactionView: View {
             numberFormatter.maximumFractionDigits = 0
         }
 
-        return numberFormatter.string(from: NSNumber(value: transaction.amount)) ?? "$0"
+        return numberFormatter.string(from: NSNumber(value: amount)) ?? "$0"
+    }
+
+    private func signedAmount(_ amountString: String) -> String {
+        guard showExpenseOrIncomeSign else {
+            return amountString
+        }
+
+        return transaction.income ? "+\(amountString)" : "-\(amountString)"
+    }
+
+    var primaryCurrencyCode: String {
+        let currentCurrency = currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let originalCurrency = transaction.originalCurrency?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
+        let convertedCurrency = transaction.convertedCurrency?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
+
+        if !convertedCurrency.isEmpty,
+           abs(transaction.convertedAmount - transaction.amount) < 0.005 {
+            return convertedCurrency
+        }
+
+        if !originalCurrency.isEmpty,
+           abs(transaction.originalAmount - transaction.amount) < 0.005 {
+            return originalCurrency
+        }
+
+        return currentCurrency
+    }
+
+    var transactionAmountString: String {
+        signedAmount(formattedAmount(transaction.amount, currencyCode: primaryCurrencyCode))
+    }
+
+    var secondaryCurrencyAmountString: String? {
+        let originalCurrency = transaction.originalCurrency?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
+        let convertedCurrency = transaction.convertedCurrency?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
+        let currentCurrency = primaryCurrencyCode
+
+        if !originalCurrency.isEmpty,
+           originalCurrency != currentCurrency,
+           transaction.originalAmount > 0 {
+            return signedAmount(formattedAmount(transaction.originalAmount, currencyCode: originalCurrency))
+        }
+
+        if !convertedCurrency.isEmpty,
+           convertedCurrency != currentCurrency,
+           transaction.convertedAmount > 0 {
+            return signedAmount(formattedAmount(transaction.convertedAmount, currencyCode: convertedCurrency))
+        }
+
+        return nil
     }
 
     var body: some View {
@@ -1336,23 +1386,23 @@ struct SingleTransactionView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                if transaction.income {
-                    Text(showExpenseOrIncomeSign ? "+\(transactionAmountString)" : transactionAmountString)
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(transactionAmountString)
                         .font(.system(.title3, design: .rounded).weight(.medium))
                         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                        .foregroundColor(future ? Color.SubtitleText : Color.IncomeGreen)
+                        .foregroundColor(future ? Color.SubtitleText : (transaction.income ? Color.IncomeGreen : Color.PrimaryText))
                         .minimumScaleFactor(0.7)
                         .lineLimit(1)
                         .layoutPriority(1)
 
-                } else {
-                    Text(showExpenseOrIncomeSign ? "-\(transactionAmountString)" : transactionAmountString)
-                        .font(.system(.title3, design: .rounded).weight(.medium))
-                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                        .foregroundColor(future ? Color.SubtitleText : Color.PrimaryText)
-                        .minimumScaleFactor(0.7)
-                        .lineLimit(1)
-                        .layoutPriority(1)
+                    if let secondaryCurrencyAmountString {
+                        Text(secondaryCurrencyAmountString)
+                            .font(.system(.caption, design: .rounded).weight(.medium))
+                            .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                            .foregroundColor(future ? Color.EvenLighterText : Color.SubtitleText)
+                            .minimumScaleFactor(0.7)
+                            .lineLimit(1)
+                    }
                 }
             }
             .id(refreshID)
