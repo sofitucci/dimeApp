@@ -2,9 +2,10 @@
 """Regression checks for Sofia's local Dime/Hermes build.
 
 These are intentionally source-level checks because the upstream project has no
-XCTest target. They guard the two failure modes Sofia hit on-device:
+XCTest target. They guard the failure modes Sofia hit on-device:
 1. Personal-team/no-app-group builds must use a real local SQLite store URL.
 2. Hermes imports must match existing categories robustly without inventing new ones.
+3. Category add/edit sheets must leave enough room for the emoji keyboard.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_CONTROLLER = ROOT / "app/dime/Data/DataController.swift"
+CATEGORY_VIEW = ROOT / "app/dime/Views/CategoryView.swift"
 ENTITLEMENTS = ROOT / "app/dime/dime.entitlements"
 INFO_PLIST = ROOT / "app/dime/Info.plist"
 
@@ -96,6 +98,21 @@ def main() -> None:
     assert_true(
         "ambiguousCategory" in active,
         "Normalized category matching must detect ambiguous existing category names.",
+    )
+
+    category_source = CATEGORY_VIEW.read_text()
+    category_active = active_swift(category_source)
+    assert_true(
+        ".presentationDetents([.height(270)])" not in category_active,
+        "Category add/edit sheets must not be locked to a 270pt sheet that the emoji keyboard covers.",
+    )
+    assert_true(
+        "private let categorySheetDetents" in category_active and ".large" in category_active,
+        "Category add/edit sheets need a shared taller detent set with a large fallback.",
+    )
+    assert_true(
+        "emojiTextField.becomeFirstResponder()" not in category_active,
+        "EmojiTextField must not auto-open the emoji keyboard before the user taps it.",
     )
 
     print("Dime local sync regression checks passed.")

@@ -15,6 +15,9 @@ enum CategoryViewMode {
     case welcome, settings, transaction
 }
 
+@available(iOS 16.0, *)
+private let categorySheetDetents: Set<PresentationDetent> = [.large]
+
 struct CategoryView: View {
     var mode: CategoryViewMode
 //    @Environment(\.colorScheme) var colorScheme
@@ -126,7 +129,8 @@ struct CategoryView: View {
         .sheet(isPresented: $newCategory) {
             if #available(iOS 16.0, *) {
                 NewCategoryAlert(income: $income, bottomSpacers: false)
-                    .presentationDetents([.height(270)])
+                    .presentationDetents(categorySheetDetents)
+                    .presentationDragIndicator(.visible)
             } else {
                 NewCategoryAlert(income: $income, bottomSpacers: true)
             }
@@ -674,7 +678,8 @@ struct CategoryListView: View {
         }) { category in
             if #available(iOS 16.0, *) {
                 EditCategoryAlert(toEdit: category, showRootToast: $showToast, rootToastTitle: $toastTitle, rootToastImage: $toastImage, positive: $positive, bottomSpacers: false)
-                    .presentationDetents([.height(270)])
+                    .presentationDetents(categorySheetDetents)
+                    .presentationDragIndicator(.visible)
             } else {
                 EditCategoryAlert(toEdit: category, showRootToast: $showToast, rootToastTitle: $toastTitle, rootToastImage: $toastImage, positive: $positive, bottomSpacers: true)
             }
@@ -1811,7 +1816,6 @@ struct EmojiTextField: UIViewRepresentable {
         emojiTextField.font = UIFont(name: "HelveticaNeue", size: 50)
         emojiTextField.textAlignment = .center
         emojiTextField.endFloatingCursor()
-        emojiTextField.becomeFirstResponder()
         return emojiTextField
     }
 
