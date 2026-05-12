@@ -61,7 +61,7 @@ struct DeleteAllAlert: View {
   @Environment(\.dismiss) var dismiss
   @Environment(\.colorScheme) var systemColorScheme
 
-  @AppStorage("bottomEdge", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("bottomEdge", store: DimeDefaults.shared)
   var bottomEdge: Double = 15
 
   @State private var offset: CGFloat = 0

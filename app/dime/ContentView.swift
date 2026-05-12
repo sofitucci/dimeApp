@@ -11,34 +11,34 @@ struct ContentView: View {
     @EnvironmentObject var appLockVM: AppLockViewModel
     @EnvironmentObject var dataController: DataController
 
-    @AppStorage("colourScheme", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var colourScheme: Int = 0
+    @AppStorage("colourScheme", store: DimeDefaults.shared) var colourScheme: Int = 0
     @Environment(\.scenePhase) var scenePhase
-    @AppStorage("showNotifications", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var showNotifications: Bool = false
-    @AppStorage("notificationsEnabled", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var notificationsEnabled: Bool = true
+    @AppStorage("showNotifications", store: DimeDefaults.shared) var showNotifications: Bool = false
+    @AppStorage("notificationsEnabled", store: DimeDefaults.shared) var notificationsEnabled: Bool = true
 
-    @AppStorage("firstLaunch", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var firstLaunch: Bool = true
+    @AppStorage("firstLaunch", store: DimeDefaults.shared) var firstLaunch: Bool = true
 
     // adds category orders
-    @AppStorage("dataMigration1", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var dataMigration1: Bool = true
+    @AppStorage("dataMigration1", store: DimeDefaults.shared) var dataMigration1: Bool = true
 
     // converts category colors to hex codes
-    @AppStorage("dataMigration2", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var dataMigration2: Bool = true
+    @AppStorage("dataMigration2", store: DimeDefaults.shared) var dataMigration2: Bool = true
 
-    @AppStorage("currency", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var currency: String = Locale.current.currencyCode!
+    @AppStorage("currency", store: DimeDefaults.shared) var currency: String = Locale.current.currencyCode!
 
     @State var showIntro: Bool = false
     @State var showUpdate: Bool = false
 
     var center = UNUserNotificationCenter.current()
 
-    @AppStorage("topEdge", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var savedTopEdge: Double = 30
-    @AppStorage("bottomEdge", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var savedBottomEdge: Double = 15
+    @AppStorage("topEdge", store: DimeDefaults.shared) var savedTopEdge: Double = 30
+    @AppStorage("bottomEdge", store: DimeDefaults.shared) var savedBottomEdge: Double = 15
 
     // updateSheetShowing
 
-    @AppStorage("previousVersion", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var previousVersionString: String = "Version \(UIApplication.appVersion ?? "") (\(UIApplication.buildNumber ?? ""))"
+    @AppStorage("previousVersion", store: DimeDefaults.shared) var previousVersionString: String = "Version \(UIApplication.appVersion ?? "") (\(UIApplication.buildNumber ?? ""))"
 
-    @AppStorage("showUpdateSheet", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var showUpdateSheet: Bool = true
+    @AppStorage("showUpdateSheet", store: DimeDefaults.shared) var showUpdateSheet: Bool = true
 
     var body: some View {
         GeometryReader { proxy in
@@ -61,7 +61,7 @@ struct ContentView: View {
         }
         .ignoresSafeArea(.keyboard)
         .onAppear {
-//            UserDefaults(suiteName: "group.com.sofitucci.dime")!.set(false, forKey: "newTransactionAdded")
+//            DimeDefaults.shared.set(false, forKey: "newTransactionAdded")
 //            WidgetCenter.shared.reloadTimelines(ofKind: "TemplateTransactions")
 
             if appLockVM.isAppLockEnabled {
@@ -69,7 +69,7 @@ struct ContentView: View {
             }
 
             let defaults =
-                UserDefaults(suiteName: "group.com.sofitucci.dime") ?? UserDefaults.standard
+                DimeDefaults.shared
 
             if defaults.object(forKey: "firstDayOfMonth") == nil {
                 defaults.set(1, forKey: "firstDayOfMonth")
@@ -89,19 +89,19 @@ struct ContentView: View {
                 defaults.set(true, forKey: "showCents")
                 defaults.set(true, forKey: "animated")
 
-                if NSUbiquitousKeyValueStore.default.string(forKey: "currency") == nil {
-                    NSUbiquitousKeyValueStore.default.set(Locale.current.currencyCode!, forKey: "currency")
+                if DimeDefaults.shared.string(forKey: "currency") == nil {
+                    DimeDefaults.shared.set(Locale.current.currencyCode!, forKey: "currency")
                 } else {
-                    currency = NSUbiquitousKeyValueStore.default.string(forKey: "currency")!
+                    currency = DimeDefaults.shared.string(forKey: "currency")!
                 }
 
                 defaults.set(2, forKey: "numberEntryType")
             } else {
-                if let holdingCurrency = NSUbiquitousKeyValueStore.default.string(forKey: "currency") {
+                if let holdingCurrency = DimeDefaults.shared.string(forKey: "currency") {
                     currency = holdingCurrency
                 } else {
                     currency = Locale.current.currencyCode!
-                    NSUbiquitousKeyValueStore.default.set(Locale.current.currencyCode!, forKey: "currency")
+                    DimeDefaults.shared.set(Locale.current.currencyCode!, forKey: "currency")
                 }
             }
 

@@ -8,7 +8,6 @@
 import Combine
 import ConfettiSwiftUI
 import Foundation
-import StoreKit
 import SwiftUI
 import UserNotifications
 import WidgetKit
@@ -16,7 +15,7 @@ import WidgetKit
 struct SettingsView: View {
   @Environment(\.dynamicTypeSize) var dynamicTypeSize
 
-  @AppStorage("colourScheme", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("colourScheme", store: DimeDefaults.shared)
   var colourScheme: Int = 0
   var colourSchemeString: String {
     if colourScheme == 1 {
@@ -28,7 +27,7 @@ struct SettingsView: View {
     }
   }
 
-  @AppStorage("activeIcon", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("activeIcon", store: DimeDefaults.shared)
   var activeIcon: String = "AppIcon"
   var appIconString: String {
     if activeIcon == "AppIcon1" {
@@ -42,7 +41,7 @@ struct SettingsView: View {
     }
   }
 
-  @AppStorage("firstWeekday", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("firstWeekday", store: DimeDefaults.shared)
   var firstWeekday: Int = 1
   var firstWeekdayString: String {
     if firstWeekday == 1 {
@@ -52,9 +51,9 @@ struct SettingsView: View {
     }
   }
 
-  @AppStorage("showNotifications", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("showNotifications", store: DimeDefaults.shared)
   var showNotifications: Bool = false
-  @AppStorage("notificationOption", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("notificationOption", store: DimeDefaults.shared)
   var option: Int = 1
   var notificationString: String {
     if showNotifications {
@@ -74,7 +73,7 @@ struct SettingsView: View {
   @Namespace var animation
 
   var iCloudString: String {
-    if NSUbiquitousKeyValueStore.default.bool(forKey: "icloud_sync") {
+    if DimeDefaults.shared.bool(forKey: "icloud_sync") {
       return String(localized: "On")
     } else {
       return String(localized: "Off")
@@ -86,7 +85,7 @@ struct SettingsView: View {
   let featureRequestEmail = SupportEmail(
     toAddress: "rafasohhh@gmail.com", subject: "Feature Request")
 
-  @AppStorage("numberEntryType", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("numberEntryType", store: DimeDefaults.shared)
   var numberEntryType: Int = 2
 
   var numberEntryString: String {
@@ -97,23 +96,23 @@ struct SettingsView: View {
     }
   }
 
-  @AppStorage("showCents", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("showCents", store: DimeDefaults.shared)
   var showCents: Bool = true
 
-  @AppStorage("animated", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var animated:
+  @AppStorage("animated", store: DimeDefaults.shared) var animated:
     Bool = true
 
-  @AppStorage("currency", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var currency:
+  @AppStorage("currency", store: DimeDefaults.shared) var currency:
     String = Locale.current.currencyCode!
 
-  @AppStorage("incomeTracking", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("incomeTracking", store: DimeDefaults.shared)
   var incomeTracking: Bool = true
     
-  @AppStorage("showExpenseOrIncomeSign", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("showExpenseOrIncomeSign", store: DimeDefaults.shared)
   var showExpenseOrIncomeSign: Bool = true
 
   @AppStorage(
-    "showUpcomingTransactions", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+    "showUpcomingTransactions", store: DimeDefaults.shared)
   var showUpcoming: Bool = true
 
   var upcomingString: String {
@@ -124,7 +123,7 @@ struct SettingsView: View {
     }
   }
 
-    @AppStorage("haptics", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+    @AppStorage("haptics", store: DimeDefaults.shared)
     var hapticType: Int = 1
 
     var hapticString: String {
@@ -217,9 +216,9 @@ struct SettingsView: View {
                   incomeTracking.toggle()
 
                   if !incomeTracking {
-                    UserDefaults(suiteName: "group.com.sofitucci.dime")!.set(
+                    DimeDefaults.shared.set(
                       false, forKey: "insightsViewIncomeFiltering")
-                    UserDefaults(suiteName: "group.com.sofitucci.dime")!.set(
+                    DimeDefaults.shared.set(
                       3, forKey: "logInsightsType")
                   }
                 })
@@ -609,7 +608,7 @@ struct TipJarAlert: View {
 
   @State private var offset: CGFloat = 0
 
-  @AppStorage("bottomEdge", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("bottomEdge", store: DimeDefaults.shared)
   var bottomEdge: Double = 15
 
   @State var opacity = 0.0
@@ -722,7 +721,7 @@ struct TipJarAlert: View {
 
             ProductView(
               products: unlockManager.loadedProducts.sorted {
-                $0.price.doubleValue < $1.price.doubleValue
+                $0.sortPrice < $1.sortPrice
               }
             )
             .padding(.bottom, 20)
@@ -790,7 +789,7 @@ struct TipJarAlert: View {
 
 struct ProductView: View {
   @EnvironmentObject var unlockManager: UnlockManager
-  let products: [SKProduct]
+  let products: [UnlockManager.TipProduct]
 
   var body: some View {
     VStack {
@@ -819,7 +818,7 @@ struct ProductView: View {
     //        .font(.system(size: 18, weight: .semibold, design: .rounded))
   }
 
-  func unlock(_ product: SKProduct) {
+  func unlock(_ product: UnlockManager.TipProduct) {
     unlockManager.buy(product: product)
   }
 

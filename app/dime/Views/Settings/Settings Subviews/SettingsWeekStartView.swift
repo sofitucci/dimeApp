@@ -9,9 +9,9 @@ import Foundation
 import SwiftUI
 
 struct SettingsWeekStartView: View {
-  @AppStorage("firstWeekday", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("firstWeekday", store: DimeDefaults.shared)
   var firstWeekday: Int = 1
-  @AppStorage("firstDayOfMonth", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("firstDayOfMonth", store: DimeDefaults.shared)
   var firstDayOfMonth: Int = 1
   @Environment(\.presentationMode) var presentationMode: Binding<PresentationMode>
 

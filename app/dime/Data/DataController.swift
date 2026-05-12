@@ -10,6 +10,10 @@ import Foundation
 import SwiftUI
 import WidgetKit
 
+enum DimeDefaults {
+    static let shared: UserDefaults = .standard
+}
+
 @available(iOS 16, *)
 enum CustomError: Swift.Error, CustomLocalizedStringResourceConvertible {
     case notFound,
@@ -30,17 +34,35 @@ enum CustomError: Swift.Error, CustomLocalizedStringResourceConvertible {
 class DataController: ObservableObject {
     static let shared = DataController()
 
-    var container = NSPersistentCloudKitContainer(name: "MainModel")
+    var container = NSPersistentContainer(name: "MainModel")
+
+    private static func localPersistentStoreURL() -> URL {
+        let fileManager = FileManager.default
+        let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? fileManager.temporaryDirectory
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.sofitucci.dime"
+        let storeDirectory = appSupportURL.appendingPathComponent(bundleID, isDirectory: true)
+
+        do {
+            try fileManager.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        } catch {
+            assertionFailure("Unable to create Dime store directory: \(error.localizedDescription)")
+        }
+
+        return storeDirectory.appendingPathComponent("Main.sqlite")
+    }
 
     init() {
-        let description = NSPersistentStoreDescription()
+        let description = container.persistentStoreDescriptions.first ?? NSPersistentStoreDescription(url: Self.localPersistentStoreURL())
+
+        if description.url == nil {
+            description.url = Self.localPersistentStoreURL()
+        }
 
         description.shouldMigrateStoreAutomatically = true
         description.shouldInferMappingModelAutomatically = true
         description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
-        description.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
 
-//        let keyValueStore = NSUbiquitousKeyValueStore.default
+//        let keyValueStore = DimeDefaults.shared
 //
 //        if keyValueStore.object(forKey: "icloud_sync") == nil {
 //            keyValueStore.set(true, forKey: "icloud_sync")
@@ -52,13 +74,7 @@ class DataController: ObservableObject {
 //            description.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(containerIdentifier: "iCloud.com.sofitucci.dime")
 //        }
 
-        description.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(containerIdentifier: "iCloud.com.sofitucci.dime")
-
-        let groupID = "group.com.sofitucci.dime"
-
-        if let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID) {
-            description.url = url.appendingPathComponent("Main.sqlite")
-        }
+        // iCloud/CloudKit is disabled for free personal-team builds.
 
         container.persistentStoreDescriptions = [description]
 
@@ -100,11 +116,11 @@ class DataController: ObservableObject {
 
     var addedTransaction: Bool {
         get {
-            UserDefaults(suiteName: "group.com.sofitucci.dime")!.bool(forKey: "newTransactionAdded")
+            DimeDefaults.shared.bool(forKey: "newTransactionAdded")
         }
 
         set {
-            UserDefaults(suiteName: "group.com.sofitucci.dime")!.set(newValue, forKey: "newTransactionAdded")
+            DimeDefaults.shared.set(newValue, forKey: "newTransactionAdded")
         }
     }
 
@@ -324,7 +340,7 @@ class DataController: ObservableObject {
 
         var calendar = Calendar(identifier: .gregorian)
 
-        calendar.firstWeekday = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(forKey: "firstWeekday")
+        calendar.firstWeekday = DimeDefaults.shared.integer(forKey: "firstWeekday")
         calendar.minimumDaysInFirstWeek = 4
 
         switch type {
@@ -647,7 +663,7 @@ class DataController: ObservableObject {
 
         var calendar = Calendar(identifier: .gregorian)
 
-        calendar.firstWeekday = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(forKey: "firstWeekday")
+        calendar.firstWeekday = DimeDefaults.shared.integer(forKey: "firstWeekday")
         calendar.minimumDaysInFirstWeek = 4
 
         let dateCapPredicate = NSPredicate(format: "%K <= %@", #keyPath(Transaction.date), Date.now as CVarArg)
@@ -695,7 +711,7 @@ class DataController: ObservableObject {
                 let thisWeek = calendar.date(from: dateComponents)!
                 startPredicate = NSPredicate(format: "%K >= %@", #keyPath(Transaction.date), thisWeek as CVarArg)
             } else if type == 3 {
-                let startOfMonth = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(forKey: "firstDayOfMonth")
+                let startOfMonth = DimeDefaults.shared.integer(forKey: "firstDayOfMonth")
 
                 let thisMonth = getStartOfMonth(startDay: startOfMonth)
                 startPredicate = NSPredicate(format: "%K >= %@", #keyPath(Transaction.date), thisMonth as CVarArg)
@@ -1199,7 +1215,7 @@ class DataController: ObservableObject {
             // calendar initialization
             var calendar = Calendar(identifier: .gregorian)
 
-            calendar.firstWeekday = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(forKey: "firstWeekday")
+            calendar.firstWeekday = DimeDefaults.shared.integer(forKey: "firstWeekday")
             calendar.minimumDaysInFirstWeek = 4
 
             var dictionary = [Date: Double]()
@@ -1373,7 +1389,7 @@ class DataController: ObservableObject {
 
         var calendar = Calendar(identifier: .gregorian)
 
-        calendar.firstWeekday = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(forKey: "firstWeekday")
+        calendar.firstWeekday = DimeDefaults.shared.integer(forKey: "firstWeekday")
         calendar.minimumDaysInFirstWeek = 4
 
         let startPredicate = NSPredicate(format: "%K >= %@", #keyPath(Transaction.date), date as CVarArg)
@@ -1504,7 +1520,7 @@ class DataController: ObservableObject {
 
         var calendar = Calendar(identifier: .gregorian)
 
-        calendar.firstWeekday = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(forKey: "firstWeekday")
+        calendar.firstWeekday = DimeDefaults.shared.integer(forKey: "firstWeekday")
         calendar.minimumDaysInFirstWeek = 4
 
         let endPredicate = NSPredicate(format: "%K < %@", #keyPath(Transaction.date), Date.now as CVarArg)
@@ -1525,7 +1541,7 @@ class DataController: ObservableObject {
 
             startPredicate = NSPredicate(format: "%K >= %@", #keyPath(Transaction.date), startDate as CVarArg)
         case .month:
-            let startOfMonth = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(forKey: "firstDayOfMonth")
+            let startOfMonth = DimeDefaults.shared.integer(forKey: "firstDayOfMonth")
 
             startDate = getStartOfMonth(startDay: startOfMonth)
 
@@ -1553,7 +1569,7 @@ class DataController: ObservableObject {
 
         var calendar = Calendar(identifier: .gregorian)
 
-        calendar.firstWeekday = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(forKey: "firstWeekday")
+        calendar.firstWeekday = DimeDefaults.shared.integer(forKey: "firstWeekday")
         calendar.minimumDaysInFirstWeek = 4
 
         switch type {
@@ -1771,6 +1787,7 @@ struct ExternalTransactionImporter {
         case invalidType(String)
         case missingCategory
         case categoryNotFound(String)
+        case ambiguousCategory(String)
         case invalidDate(String)
         case recurringImportsNotAllowed
 
@@ -1798,6 +1815,8 @@ struct ExternalTransactionImporter {
                 return "Missing categoryId or category."
             case let .categoryNotFound(category):
                 return "No matching Dime category: \(category)."
+            case let .ambiguousCategory(category):
+                return "More than one Dime category matches: \(category). Rename one category or import with categoryId."
             case let .invalidDate(date):
                 return "Invalid date: \(date)."
             case .recurringImportsNotAllowed:
@@ -1926,7 +1945,7 @@ struct ExternalTransactionImporter {
     }
 
     private static func importDefaults() -> UserDefaults {
-        return UserDefaults(suiteName: "group.com.sofitucci.dime") ?? UserDefaults.standard
+        return DimeDefaults.shared
     }
 
     private static func prepare(_ item: ExternalTransactionImportItem, dataController: DataController) throws -> PreparedImportItem {
@@ -2046,14 +2065,40 @@ struct ExternalTransactionImporter {
         }
 
         let request: NSFetchRequest<Category> = Category.fetchRequest()
-        request.fetchLimit = 1
-        request.predicate = NSPredicate(format: "name = %@ AND income = %d", categoryName, income)
+        request.predicate = NSPredicate(format: "income = %d", income)
 
-        if let category = try? context.fetch(request).first {
+        guard let categories = try? context.fetch(request) else {
+            throw ImportError.categoryNotFound(categoryName)
+        }
+
+        let exactMatches = categories.filter { $0.wrappedName == categoryName }
+
+        if exactMatches.count == 1, let category = exactMatches.first {
             return category
         }
 
+        if exactMatches.count > 1 {
+            throw ImportError.ambiguousCategory(categoryName)
+        }
+
+        let normalizedName = normalizedCategoryName(categoryName)
+        let normalizedMatches = categories.filter { normalizedCategoryName($0.wrappedName) == normalizedName }
+
+        if normalizedMatches.count == 1, let category = normalizedMatches.first {
+            return category
+        }
+
+        if normalizedMatches.count > 1 {
+            throw ImportError.ambiguousCategory(categoryName)
+        }
+
         throw ImportError.categoryNotFound(categoryName)
+    }
+
+    private static func normalizedCategoryName(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 
     private static func parseDate(_ rawValue: String) throws -> Date {
@@ -2218,7 +2263,7 @@ struct HermesTransactionSyncClient {
     }
 
     private static func syncDefaults() -> UserDefaults {
-        return UserDefaults(suiteName: "group.com.sofitucci.dime") ?? UserDefaults.standard
+        return DimeDefaults.shared
     }
 }
 

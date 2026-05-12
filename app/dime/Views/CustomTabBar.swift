@@ -24,8 +24,8 @@ struct CustomTabBar: View {
 
     var launchAdd: Bool
 
-    @AppStorage("confetti", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var confetti: Bool = false
-    @AppStorage("firstTransactionViewLaunch", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var firstLaunch: Bool = true
+    @AppStorage("confetti", store: DimeDefaults.shared) var confetti: Bool = false
+    @AppStorage("firstTransactionViewLaunch", store: DimeDefaults.shared) var firstLaunch: Bool = true
 
     @State var animate = false
 

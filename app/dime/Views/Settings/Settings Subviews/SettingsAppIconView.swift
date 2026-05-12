@@ -16,7 +16,7 @@ struct AppIconBundle: Hashable {
 }
 
 struct SettingsAppIconView: View {
-  @AppStorage("activeIcon", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("activeIcon", store: DimeDefaults.shared)
   var activeIcon: String = "AppIcon"
   @Environment(\.presentationMode) var presentationMode: Binding<PresentationMode>
 

@@ -11,9 +11,9 @@ import SwiftUI
 struct SettingsNotificationsView: View {
   @Environment(\.presentationMode) var presentationMode: Binding<PresentationMode>
 
-  @AppStorage("showNotifications", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("showNotifications", store: DimeDefaults.shared)
   var showNotifications: Bool = false
-  @AppStorage("notificationsEnabled", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("notificationsEnabled", store: DimeDefaults.shared)
   var notificationsEnabled: Bool = true
   @State var option = 1
   @State var customTime = Date.now
@@ -190,15 +190,15 @@ struct SettingsNotificationsView: View {
         .padding(.horizontal, 15)
         .background(Color.SettingsBackground, in: RoundedRectangle(cornerRadius: 9))
         .onChange(of: option) { newValue in
-          UserDefaults(suiteName: "group.com.sofitucci.dime")!.set(
+          DimeDefaults.shared.set(
             option, forKey: "notificationOption")
 
           if newValue == 3 {
             let components = Calendar.current.dateComponents([.hour, .minute], from: customTime)
 
-            UserDefaults(suiteName: "group.com.sofitucci.dime")!.set(
+            DimeDefaults.shared.set(
               components.hour!, forKey: "customHour")
-            UserDefaults(suiteName: "group.com.sofitucci.dime")!.set(
+            DimeDefaults.shared.set(
               components.minute!, forKey: "customMinute")
           }
 
@@ -207,28 +207,28 @@ struct SettingsNotificationsView: View {
         .onChange(of: customTime) { _ in
           let components = Calendar.current.dateComponents([.hour, .minute], from: customTime)
 
-          UserDefaults(suiteName: "group.com.sofitucci.dime")!.set(
+          DimeDefaults.shared.set(
             components.hour!, forKey: "customHour")
-          UserDefaults(suiteName: "group.com.sofitucci.dime")!.set(
+          DimeDefaults.shared.set(
             components.minute!, forKey: "customMinute")
 
           newNotification()
         }
         .onAppear {
-          if UserDefaults(suiteName: "group.com.sofitucci.dime")!.object(
+          if DimeDefaults.shared.object(
             forKey: "notificationOption") != nil {
-            option = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(
+            option = DimeDefaults.shared.integer(
               forKey: "notificationOption")
           }
 
-          if UserDefaults(suiteName: "group.com.sofitucci.dime")!.object(forKey: "customHour")
+          if DimeDefaults.shared.object(forKey: "customHour")
             != nil
-            && UserDefaults(suiteName: "group.com.sofitucci.dime")!.object(forKey: "customMinute")
+            && DimeDefaults.shared.object(forKey: "customMinute")
               != nil {
             var components = DateComponents()
-            components.hour = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(
+            components.hour = DimeDefaults.shared.integer(
               forKey: "customHour")
-            components.minute = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(
+            components.minute = DimeDefaults.shared.integer(
               forKey: "customMinute")
             customTime = Calendar.current.date(from: components)!
           }
@@ -251,9 +251,9 @@ func newNotification() {
   var components = DateComponents()
   var option = 1
 
-  if UserDefaults(suiteName: "group.com.sofitucci.dime")!.object(forKey: "notificationOption")
+  if DimeDefaults.shared.object(forKey: "notificationOption")
     != nil {
-    option = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(
+    option = DimeDefaults.shared.integer(
       forKey: "notificationOption")
   }
 
@@ -264,11 +264,11 @@ func newNotification() {
     components.hour = 20
     components.minute = 0
   } else {
-    if UserDefaults(suiteName: "group.com.sofitucci.dime")!.object(forKey: "customHour") != nil,
-      UserDefaults(suiteName: "group.com.sofitucci.dime")!.object(forKey: "customMinute") != nil {
-      components.hour = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(
+    if DimeDefaults.shared.object(forKey: "customHour") != nil,
+      DimeDefaults.shared.object(forKey: "customMinute") != nil {
+      components.hour = DimeDefaults.shared.integer(
         forKey: "customHour")
-      components.minute = UserDefaults(suiteName: "group.com.sofitucci.dime")!.integer(
+      components.minute = DimeDefaults.shared.integer(
         forKey: "customMinute")
     } else {
       components.hour = 8

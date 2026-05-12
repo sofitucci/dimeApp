@@ -25,7 +25,7 @@ struct TransactionView: View {
         UIAccessibility.isBoldTextEnabled
     }
 
-    @AppStorage("topEdge", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var topEdge:
+    @AppStorage("topEdge", store: DimeDefaults.shared) var topEdge:
     Double = 20
 
     @State private var note = ""
@@ -47,7 +47,7 @@ struct TransactionView: View {
     @State var showCategoryPicker = false
     @State var showCategorySheet = false
 
-    @AppStorage("currency", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var currency: String = Locale.current.currencyCode!
+    @AppStorage("currency", store: DimeDefaults.shared) var currency: String = Locale.current.currencyCode!
     var currencySymbol: String {
         return Locale.current.localizedCurrencySymbol(forCurrencyCode: currency)!
     }
@@ -69,7 +69,7 @@ struct TransactionView: View {
     @ObservedObject var keyboardHeightHelper = KeyboardHeightHelper()
 
     @AppStorage(
-        "firstTransactionViewLaunch", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+        "firstTransactionViewLaunch", store: DimeDefaults.shared)
     var firstLaunch: Bool = true
 
     // edit mode
@@ -80,7 +80,7 @@ struct TransactionView: View {
     @State var toDelete: Transaction?
     @State var deleteMode = false
 
-    @AppStorage("bottomEdge", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+    @AppStorage("bottomEdge", store: DimeDefaults.shared)
     var bottomEdge: Double = 15
 
     @State private var offset: CGFloat = 0
@@ -138,7 +138,7 @@ struct TransactionView: View {
         }
     }
 
-    @AppStorage("colourScheme", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+    @AppStorage("colourScheme", store: DimeDefaults.shared)
     var colourScheme: Int = 0
 
     @Environment(\.colorScheme) var systemColorScheme
@@ -168,7 +168,7 @@ struct TransactionView: View {
     @State var textFieldFocused: Bool = false
 
     @AppStorage(
-        "showTransactionRecommendations", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+        "showTransactionRecommendations", store: DimeDefaults.shared)
     var showRecommendations: Bool = false
 
     var suggestedTransactions: [Transaction] {
@@ -218,7 +218,7 @@ struct TransactionView: View {
     }
 
     @State private var price: Double = 0
-    @AppStorage("numberEntryType", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+    @AppStorage("numberEntryType", store: DimeDefaults.shared)
     var numberEntryType: Int = 1
     @State var isEditingDecimal = false
     @State var decimalValuesAssigned: AssignedDecimal = .none
@@ -1470,7 +1470,7 @@ struct RecurringPickerView: View {
     let stringArray = ["none", "daily", "weekly", "monthly"]
     let stringArray2 = ["", "days", "weeks", "months"]
 
-    @AppStorage("bottomEdge", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+    @AppStorage("bottomEdge", store: DimeDefaults.shared)
     var bottomEdge: Double = 15
 
     @State private var offset: CGFloat = 0
@@ -1478,7 +1478,7 @@ struct RecurringPickerView: View {
     @State var holdingType = 0
     @State var holdingCoefficient = 0
 
-    @AppStorage("colourScheme", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+    @AppStorage("colourScheme", store: DimeDefaults.shared)
     var colourScheme: Int = 0
 
     @Environment(\.colorScheme) var systemColorScheme

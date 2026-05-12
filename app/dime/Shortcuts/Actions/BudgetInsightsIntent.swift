@@ -92,9 +92,9 @@ struct ShortcutBudgetView: View {
     let amount: Double
     let type: Int
 
-    @AppStorage("showCents", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var showCents: Bool = true
+    @AppStorage("showCents", store: DimeDefaults.shared) var showCents: Bool = true
 
-    @AppStorage("currency", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var currency: String = Locale.current.currencyCode!
+    @AppStorage("currency", store: DimeDefaults.shared) var currency: String = Locale.current.currencyCode!
 
     var budgetType: String {
         switch type {

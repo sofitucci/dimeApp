@@ -6,76 +6,34 @@
 //
 
 import Foundation
-import StoreKit
 
-class UnlockManager: NSObject, ObservableObject, SKPaymentTransactionObserver, SKProductsRequestDelegate {
+class UnlockManager: ObservableObject {
     enum RequestState {
         case loading
         case loaded
         case failed
     }
 
+    struct TipProduct: Hashable {
+        let productIdentifier: String
+        let localizedPrice: String
+        let sortPrice: Double
+    }
+
     var canMakePayments: Bool {
-        SKPaymentQueue.canMakePayments()
+        false
     }
 
-    private enum StoreError: Error {
-        case invalidIdentifiers, missingProduct
-    }
-
-    @Published var requestState = RequestState.loading
+    @Published var requestState = RequestState.failed
     @Published var purchaseCount: Int
     @Published var failedTransaction = false
 
     private let dataController: DataController
-    private let request: SKProductsRequest
+    var loadedProducts = [TipProduct]()
 
-    var loadedProducts = [SKProduct]()
-
-    func paymentQueue(_ queue: SKPaymentQueue, updatedTransactions transactions: [SKPaymentTransaction]) {
-        DispatchQueue.main.async { [self] in
-            for transaction in transactions {
-                switch transaction.transactionState {
-                case .purchased, .restored:
-
-                    self.purchaseCount += 1
-                    self.dataController.tipCounter = purchaseCount
-                    queue.finishTransaction(transaction)
-
-                case .failed:
-                    self.failedTransaction = true
-                    queue.finishTransaction(transaction)
-                    revertBool()
-                default:
-                    break
-                }
-            }
-        }
-    }
-
-    func productsRequest(_: SKProductsRequest, didReceive response: SKProductsResponse) {
-        DispatchQueue.main.async {
-            // Store the returned products for later, if we need them.
-            self.loadedProducts = response.products
-
-            guard !self.loadedProducts.isEmpty else {
-                self.requestState = .failed
-                return
-            }
-
-            if response.invalidProductIdentifiers.isEmpty == false {
-                print("ALERT: Received invalid product identifiers: \(response.invalidProductIdentifiers)")
-                self.requestState = .failed
-                return
-            }
-
-            self.requestState = .loaded
-        }
-    }
-
-    func buy(product: SKProduct) {
-        let payment = SKPayment(product: product)
-        SKPaymentQueue.default().add(payment)
+    func buy(product _: TipProduct) {
+        failedTransaction = true
+        revertBool()
     }
 
     func revertBool() {
@@ -85,33 +43,12 @@ class UnlockManager: NSObject, ObservableObject, SKPaymentTransactionObserver, S
     }
 
     func restore() {
-        SKPaymentQueue.default().restoreCompletedTransactions()
+        failedTransaction = true
+        revertBool()
     }
 
     init(dataController: DataController) {
-        // Store the data controller we were sent.
         self.dataController = dataController
-
-        // Prepare to look for our unlock product.
-        let productIDs = Set(["com.sofitucci.dime.smalltip", "com.sofitucci.dime.mediumtip", "com.sofitucci.dime.largetip"])
-        request = SKProductsRequest(productIdentifiers: productIDs)
-
-        // This is required because we inherit from NSObject.
         purchaseCount = dataController.tipCounter
-
-        super.init()
-
-        // Start watching the payment queue.
-        SKPaymentQueue.default().add(self)
-
-        // Set ourselves up to be notified when the product request completes.
-        request.delegate = self
-
-        // Start the request
-        request.start()
-    }
-
-    deinit {
-        SKPaymentQueue.default().remove(self)
     }
 }

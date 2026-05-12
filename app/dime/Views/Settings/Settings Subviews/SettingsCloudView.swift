@@ -53,7 +53,7 @@ struct SettingsCloudView: View {
             iCloudStorage.toggle()
           }
           .onChange(of: iCloudStorage) { newValue in
-            NSUbiquitousKeyValueStore.default.set(newValue, forKey: "icloud_sync")
+            DimeDefaults.shared.set(newValue, forKey: "icloud_sync")
           }
         }
         .frame(maxWidth: .infinity)
@@ -70,7 +70,7 @@ struct SettingsCloudView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
     .onAppear {
-      iCloudStorage = NSUbiquitousKeyValueStore.default.bool(forKey: "icloud_sync")
+      iCloudStorage = DimeDefaults.shared.bool(forKey: "icloud_sync")
     }
     .modifier(SettingsSubviewModifier())
 

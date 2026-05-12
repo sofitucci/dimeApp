@@ -9,11 +9,11 @@ import Foundation
 import SwiftUI
 
 struct SettingsNumberEntryView: View {
-  @AppStorage("numberEntryType", store: UserDefaults(suiteName: "group.com.sofitucci.dime"))
+  @AppStorage("numberEntryType", store: DimeDefaults.shared)
   var numberEntryType: Int = 1
   @Environment(\.presentationMode) var presentationMode: Binding<PresentationMode>
   @Environment(\.colorScheme) var colorScheme
-  @AppStorage("currency", store: UserDefaults(suiteName: "group.com.sofitucci.dime")) var currency:
+  @AppStorage("currency", store: DimeDefaults.shared) var currency:
     String = Locale.current.currencyCode!
   private var currencySymbol: String {
     return Locale.current.localizedCurrencySymbol(forCurrencyCode: currency)!
