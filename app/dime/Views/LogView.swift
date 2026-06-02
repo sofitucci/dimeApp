@@ -471,6 +471,12 @@ struct LogInsightsView: View {
     @AppStorage("logInsightsType", store: DimeDefaults.shared) var insightsType = 1
 
     @AppStorage("logViewLineGraph", store: DimeDefaults.shared) var lineGraph: Bool = false
+    @AppStorage("currency", store: DimeDefaults.shared) var currency: String = Locale.current.currencyCode ?? "UYU"
+
+    var currencyCode: String {
+        let normalizedCurrency = currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        return normalizedCurrency.isEmpty ? "UYU" : normalizedCurrency
+    }
 
     var netTotal: (value: Double, positive: Bool) {
         dataController.getLogViewTotalNet(type: timeframe)
@@ -544,6 +550,27 @@ struct LogInsightsView: View {
         }
     }
 
+    var usdEquivalentText: String? {
+        guard insightsType == 1, currencyCode != "USD" else {
+            return nil
+        }
+
+        guard let latestBHUUSDToUYURate = dataController.getLatestBHUUSDToUYURate(), latestBHUUSDToUYURate > 0 else {
+            return nil
+        }
+
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "USD"
+        formatter.maximumFractionDigits = showCents ? 2 : 0
+
+        let equivalent = netTotal.value / latestBHUUSDToUYURate
+        let sign = netTotal.positive ? "+" : "-"
+        let formatted = formatter.string(from: NSNumber(value: equivalent)) ?? "$\(formatNumber(showCents: showCents, number: equivalent))"
+
+        return "approx. USD \(sign)\(formatted)"
+    }
+
     var headingText: String {
         if insightsType == 1 {
             return "Net total"
@@ -587,6 +614,14 @@ struct LogInsightsView: View {
 
                 EmptyView()
                     .modifier(NumberView(number: amount, dynamicTypeSize: _dynamicTypeSize.wrappedValue, netTotal: insightsType == 1, positive: netTotal.positive))
+
+                if let usdEquivalentText {
+                    Text(usdEquivalentText)
+                        .font(.system(.subheadline, design: .rounded).weight(.medium))
+                        .foregroundColor(Color.SubtitleText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
             }
             .padding(7)
             .contentShape(Rectangle())
@@ -673,7 +708,7 @@ struct LogInsightsView: View {
         }
         .padding([.bottom, .horizontal], 20)
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-        .frame(height: lineGraph ? 240 : 170)
+        .frame(height: lineGraph ? 258 : 188)
     }
 
     func formatNumber(showCents: Bool, number: Double) -> String {
@@ -1256,6 +1291,11 @@ struct SingleTransactionView: View {
 
     @State private var offset: CGFloat = 0
     @State private var deleted: Bool = false
+    @State private var deleteSwipeActive: Bool = false
+
+    private let rowSwipeMinimumDistance: CGFloat = 24
+    private let rowSwipeAxisRatio: CGFloat = 1.6
+
     var deletePopup: Bool {
         return abs(offset) > UIScreen.main.bounds.width * 0.2
     }
@@ -1265,6 +1305,13 @@ struct SingleTransactionView: View {
     }
 
     @GestureState var isDragging = false
+
+    private func isDeleteSwipeIntent(_ value: DragGesture.Value) -> Bool {
+        let horizontal = value.translation.width
+        let vertical = abs(value.translation.height)
+
+        return horizontal < -rowSwipeMinimumDistance && abs(horizontal) > vertical * rowSwipeAxisRatio
+    }
 
     var imageSize: Double {
         let scale = min(1.5, 1 + (abs(offset + 40) / 100))
@@ -1457,18 +1504,41 @@ struct SingleTransactionView: View {
         }
         .animation(.easeInOut, value: deletePopup)
         .simultaneousGesture(
-            DragGesture()
-                .updating($isDragging, body: { _, state, _ in
-                    state = true
+            DragGesture(minimumDistance: rowSwipeMinimumDistance)
+                .updating($isDragging, body: { value, state, _ in
+                    state = deleteSwipeActive || isDeleteSwipeIntent(value)
                 })
                 .onChanged { value in
-                    if value.translation.width < 0 {
-                        withAnimation {
-                            offset = value.translation.width
+                    if !deleteSwipeActive {
+                        guard isDeleteSwipeIntent(value) else {
+                            return
                         }
+
+                        deleteSwipeActive = true
+                    }
+
+                    guard value.translation.width < 0 else {
+                        return
+                    }
+
+                    withAnimation {
+                        offset = value.translation.width
                     }
                 }
                 .onEnded { _ in
+                    let shouldHandleDeleteSwipe = deleteSwipeActive
+                    deleteSwipeActive = false
+
+                    guard shouldHandleDeleteSwipe else {
+                        if offset != 0 {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                offset = 0
+                            }
+                        }
+
+                        return
+                    }
+
                     if deleteConfirm {
                         deleted = true
                         withAnimation(.easeInOut(duration: 0.3)) {
@@ -1514,7 +1584,8 @@ struct SingleTransactionView: View {
                 }
         )
         .onChange(of: isDragging) { _ in
-            if !isDragging && !deleted {
+            if !isDragging && !deleted && deleteSwipeActive {
+                deleteSwipeActive = false
                 withAnimation(.easeInOut(duration: 0.3)) {
                     offset = 0
                 }

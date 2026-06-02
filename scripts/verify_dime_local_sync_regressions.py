@@ -6,6 +6,8 @@ XCTest target. They guard the failure modes Sofia hit on-device:
 1. Personal-team/no-app-group builds must use a real local SQLite store URL.
 2. Hermes imports must match existing categories robustly without inventing new ones.
 3. Category add/edit sheets must leave enough room for the emoji keyboard.
+4. Transaction row swipe-to-delete must not steal vertical scroll gestures.
+5. Manual entries must get the same USD-equivalent metadata that imports get.
 """
 from __future__ import annotations
 
@@ -15,6 +17,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_CONTROLLER = ROOT / "app/dime/Data/DataController.swift"
+LOG_VIEW = ROOT / "app/dime/Views/LogView.swift"
+HOME_VIEW = ROOT / "app/dime/Views/HomeView.swift"
+TRANSACTION_VIEW = ROOT / "app/dime/Views/TransactionView.swift"
+NUMBER_PAD = ROOT / "app/dime/Components/Transactions/NumberPad.swift"
 CATEGORY_VIEW = ROOT / "app/dime/Views/CategoryView.swift"
 ENTITLEMENTS = ROOT / "app/dime/dime.entitlements"
 INFO_PLIST = ROOT / "app/dime/Info.plist"
@@ -117,6 +123,123 @@ def main() -> None:
     assert_true(
         "ambiguousCategory" in active,
         "Normalized category matching must detect ambiguous existing category names.",
+    )
+    assert_true(
+        "matchingImportedTransaction" in active
+        and "Updated \\(updated) existing transaction" in active
+        and "Will update existing" in active,
+        "Hermes reimports must update legacy/untracked matching rows so metadata repairs can be applied once.",
+    )
+    duplicate_skip_before_update_checks = re.findall(
+        r"if\s+importedIds\.contains\(prepared\.externalId\)\s*\{.*?skipped\s*\+=\s*1.*?continue\s*\}\s*if\s+(?:let\s+existingTransaction\s*=\s*)?matchingImportedTransaction",
+        active,
+        re.S,
+    )
+    assert_true(
+        len(duplicate_skip_before_update_checks) >= 2,
+        "Hermes imports must skip already-imported external IDs before matching/updating existing transactions, so refreshes do not overwrite rows after import.",
+    )
+    assert_true(
+        "matchingAmounts(for item" in active
+        and "prepared.originalAmount" in active
+        and "prepared.convertedAmount" in active,
+        "Duplicate Hermes matching must consider both old original amounts and new converted amounts for USD/UYU repairs.",
+    )
+    assert_true(
+        "getLatestBHUUSDToUYURate" in active
+        and "exchangeRateSource" in active
+        and "USD" in active
+        and "UYU" in active,
+        "DataController must expose the latest BHU USD/UYU rate from imported transaction metadata for approximate totals.",
+    )
+
+    home_source = HOME_VIEW.read_text()
+    home_active = active_swift(home_source)
+    assert_true(
+        "preview.hasActionableImports" in home_active
+        and "No new Hermes expenses to import." in home_active,
+        "Hermes sync must not present an Import confirmation when the fetched batch only contains already-imported external IDs.",
+    )
+    assert_true(
+        "acknowledgeImportedExternalIds" in active
+        and "handledExternalIds" in active
+        and "/v1/dime/imported" in active
+        and "shouldAcknowledgeHermesSync" in home_active,
+        "After a confirmed Hermes sync import, Dime must acknowledge handled external IDs so the server stops offering them in later refreshes.",
+    )
+
+    log_source = LOG_VIEW.read_text()
+    log_active = active_swift(log_source)
+    assert_true(
+        "usdEquivalentText" in log_active
+        and "getLatestBHUUSDToUYURate" in log_active
+        and "approx. USD" in log_active
+        and "insightsType == 1" in log_active,
+        "Log net total must show an approximate USD equivalent only for the big net-total header.",
+    )
+    assert_true(
+        "private func isDeleteSwipeIntent" in log_active
+        and "rowSwipeMinimumDistance" in log_active
+        and "rowSwipeAxisRatio" in log_active
+        and "abs(value.translation.height)" in log_active,
+        "Transaction row swipe-to-delete must require clear horizontal intent before reacting, so vertical scrolls are not captured.",
+    )
+    assert_true(
+        "DragGesture(minimumDistance: rowSwipeMinimumDistance" in log_active,
+        "Transaction row swipe-to-delete must use a minimum drag distance instead of starting on tiny diagonal scroll movement.",
+    )
+    assert_true(
+        "if value.translation.width < 0 {\n                        withAnimation {\n                            offset = value.translation.width" not in log_active,
+        "Transaction rows must not move left for any tiny negative horizontal translation during vertical scroll.",
+    )
+
+    transaction_source = TRANSACTION_VIEW.read_text()
+    transaction_active = active_swift(transaction_source)
+    number_pad_source = NUMBER_PAD.read_text()
+    number_pad_active = active_swift(number_pad_source)
+    assert_true(
+        "displayCurrencyCode: selectedEntryCurrencyCode" in transaction_active
+        and "manualCurrencyPicker" in transaction_active
+        and "Enter amount in \\(currencyCode)" in transaction_active
+        and "USD" in transaction_active
+        and "UYU" in transaction_active,
+        "Manual TransactionView adds must expose an obvious USD/UYU entry-currency picker next to the amount field.",
+    )
+    assert_true(
+        "var displayCurrencyCode: String? = nil" in number_pad_active
+        and "effectiveCurrencyCode" in number_pad_active,
+        "NumberPadTextView must allow TransactionView to display the selected manual-entry currency instead of always using the app currency.",
+    )
+    assert_true(
+        "manualPrimaryAmount(for: price, entryCurrencyCode: submittedEntryCurrencyCode" in transaction_active
+        and "applyManualCurrencyEntry(" in transaction_active
+        and "entryAmount(for: transaction, entryCurrencyCode:" in transaction_active,
+        "TransactionView must validate, save, and edit manual USD entries using converted primary-currency amounts.",
+    )
+    assert_true(
+        "func manualPrimaryAmount" in active
+        and "entryCurrency == \"USD\", primaryCurrency == \"UYU\"" in active
+        and "return amount * rate" in active
+        and "entryCurrency == \"UYU\", primaryCurrency == \"USD\"" in active
+        and "return amount / rate" in active,
+        "DataController must convert manual entries between USD and UYU with the latest BHU USD/UYU rate.",
+    )
+    assert_true(
+        "func applyManualCurrencyEntry" in active
+        and "transaction.originalAmount = enteredAmount" in active
+        and "transaction.originalCurrency = entryCurrency" in active
+        and "transaction.convertedAmount = primaryAmount" in active
+        and "transaction.convertedCurrency = primaryCurrency" in active
+        and "Manual entry BHU estimate" in active,
+        "DataController must persist the entered USD/UYU amount plus converted primary amount and BHU-rate metadata.",
+    )
+    assert_true(
+        "func applyManualUSDEquivalent" in active
+        and "transaction.originalAmount = amount" in active
+        and "transaction.originalCurrency = primaryCurrency" in active
+        and "transaction.convertedAmount = amount / rate" in active
+        and "transaction.convertedCurrency = \"USD\"" in active,
+        "DataController must still apply a latest-BHU-rate USD equivalent to manually created non-USD transactions.",
     )
 
     category_source = CATEGORY_VIEW.read_text()

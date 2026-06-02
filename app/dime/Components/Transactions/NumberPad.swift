@@ -242,8 +242,17 @@ struct NumberPadTextView: View {
     @Binding var decimalValuesAssigned: AssignedDecimal
 
     @AppStorage("currency", store: DimeDefaults.shared) var currency: String = Locale.current.currencyCode!
+    var displayCurrencyCode: String? = nil
+    var effectiveCurrencyCode: String {
+        let selected = displayCurrencyCode?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if let selected, !selected.isEmpty {
+            return selected
+        }
+
+        return currency
+    }
     var currencySymbol: String {
-        return Locale.current.localizedCurrencySymbol(forCurrencyCode: currency)!
+        return Locale.current.localizedCurrencySymbol(forCurrencyCode: effectiveCurrencyCode) ?? effectiveCurrencyCode
     }
 //
 //    var displayNumbers: [String] {

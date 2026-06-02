@@ -218,6 +218,7 @@ struct TransactionView: View {
     }
 
     @State private var price: Double = 0
+    @State private var entryCurrencyCode = ""
     @AppStorage("numberEntryType", store: DimeDefaults.shared)
     var numberEntryType: Int = 1
     @State var isEditingDecimal = false
@@ -442,7 +443,15 @@ struct TransactionView: View {
 
                     // number display and note view
                     VStack(spacing: 8) {
-                        NumberPadTextView(price: $price, isEditingDecimal: $isEditingDecimal, decimalValuesAssigned: $decimalValuesAssigned)
+                        NumberPadTextView(
+                            price: $price,
+                            isEditingDecimal: $isEditingDecimal,
+                            decimalValuesAssigned: $decimalValuesAssigned,
+                            displayCurrencyCode: selectedEntryCurrencyCode
+                        )
+                        if supportsManualUSDEntry {
+                            manualCurrencyPicker
+                        }
                         NoteView(note: $note, focused: $textFieldFocused)
                     }
                 }
@@ -891,11 +900,13 @@ struct TransactionView: View {
         .onAppear {
             DispatchQueue.main.async {
                 if let transaction = toEdit {
+                    let initialCurrencyCode = initialEntryCurrencyCode(for: transaction)
+                    entryCurrencyCode = initialCurrencyCode
                     repeatType = Int(transaction.recurringType)
                     repeatCoefficient = Int(transaction.recurringCoefficient)
-                    price = transaction.wrappedAmount
+                    price = entryAmount(for: transaction, entryCurrencyCode: initialCurrencyCode)
 
-                    if transaction.wrappedAmount.truncatingRemainder(dividingBy: 1) > 0 && numberEntryType == 2 {
+                    if price.truncatingRemainder(dividingBy: 1) > 0 && numberEntryType == 2 {
                         isEditingDecimal = true
                         decimalValuesAssigned = .second
                     }
@@ -903,6 +914,8 @@ struct TransactionView: View {
                     if transaction.wrappedDate > Date.now {
                         animateIcon = true
                     }
+                } else if entryCurrencyCode.isEmpty {
+                    entryCurrencyCode = initialEntryCurrencyCode()
                 }
             }
         }
@@ -925,6 +938,94 @@ struct TransactionView: View {
                 swipingOffset = capsuleWidth
             }
         }
+    }
+
+    private var primaryCurrencyCode: String {
+        normalizedCurrencyCode(currency) ?? "UYU"
+    }
+
+    private var selectedEntryCurrencyCode: String {
+        normalizedCurrencyCode(entryCurrencyCode) ?? primaryCurrencyCode
+    }
+
+    private var supportsManualUSDEntry: Bool {
+        primaryCurrencyCode == "UYU" || primaryCurrencyCode == "USD"
+    }
+
+    private var manualEntryCurrencyOptions: [String] {
+        let alternateCurrency = primaryCurrencyCode == "USD" ? "UYU" : "USD"
+        return [primaryCurrencyCode, alternateCurrency]
+    }
+
+    private var manualCurrencyPicker: some View {
+        HStack(spacing: 8) {
+            ForEach(manualEntryCurrencyOptions, id: \.self) { currencyCode in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        entryCurrencyCode = currencyCode
+                    }
+                } label: {
+                    Text("\(currencySymbol(for: currencyCode)) \(currencyCode)")
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .lineLimit(1)
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        .foregroundColor(selectedEntryCurrencyCode == currencyCode ? Color.LightIcon : Color.SubtitleText)
+                        .background(
+                            selectedEntryCurrencyCode == currencyCode ? Color.DarkBackground : Color.SecondaryBackground,
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Enter amount in \(currencyCode)")
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func currencySymbol(for currencyCode: String) -> String {
+        Locale.current.localizedCurrencySymbol(forCurrencyCode: currencyCode) ?? currencyCode
+    }
+
+    private func initialEntryCurrencyCode(for transaction: Transaction? = nil) -> String {
+        guard let transaction else {
+            return primaryCurrencyCode
+        }
+
+        let originalCurrency = normalizedCurrencyCode(transaction.originalCurrency)
+        let convertedCurrency = normalizedCurrencyCode(transaction.convertedCurrency)
+
+        if originalCurrency == "USD", convertedCurrency == primaryCurrencyCode, transaction.originalAmount > 0 {
+            return "USD"
+        }
+
+        if convertedCurrency == "USD", originalCurrency == primaryCurrencyCode, transaction.convertedAmount > 0 {
+            return primaryCurrencyCode
+        }
+
+        return primaryCurrencyCode
+    }
+
+    private func entryAmount(for transaction: Transaction, entryCurrencyCode: String) -> Double {
+        let originalCurrency = normalizedCurrencyCode(transaction.originalCurrency)
+        let convertedCurrency = normalizedCurrencyCode(transaction.convertedCurrency)
+
+        if originalCurrency == entryCurrencyCode, transaction.originalAmount > 0 {
+            return transaction.originalAmount
+        }
+
+        if convertedCurrency == entryCurrencyCode, transaction.convertedAmount > 0 {
+            return transaction.convertedAmount
+        }
+
+        return transaction.wrappedAmount
+    }
+
+    private func showMissingExchangeRateToast(feedbackGenerator: UINotificationFeedbackGenerator) {
+        toastImage = "dollarsign.circle"
+        toastTitle = "Missing USD Rate"
+        showToast = true
+        feedbackGenerator.notificationOccurred(.error)
     }
 
     func isDateToday(date: Date) -> Bool {
@@ -1015,6 +1116,12 @@ struct TransactionView: View {
             return
         }
 
+        let submittedEntryCurrencyCode = selectedEntryCurrencyCode
+        guard dataController.manualPrimaryAmount(for: price, entryCurrencyCode: submittedEntryCurrencyCode, primaryCurrencyCode: currency) != nil else {
+            showMissingExchangeRateToast(feedbackGenerator: generator)
+            return
+        }
+
         generator.notificationOccurred(.success)
 
         if let editedTransaction = toEdit {
@@ -1030,7 +1137,13 @@ struct TransactionView: View {
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 withAnimation(.easeInOut(duration: 0.5)) {
-                    editedTransaction.amount = price
+                    dataController.applyManualCurrencyEntry(
+                        to: editedTransaction,
+                        enteredAmount: price,
+                        entryCurrencyCode: submittedEntryCurrencyCode,
+                        primaryCurrencyCode: currency,
+                        date: date
+                    )
                     editedTransaction.date = date
                     editedTransaction.income = income
 
@@ -1078,7 +1191,13 @@ struct TransactionView: View {
             transaction.category = unwrappedCategory
         }
 
-        transaction.amount = price
+        dataController.applyManualCurrencyEntry(
+            to: transaction,
+            enteredAmount: price,
+            entryCurrencyCode: submittedEntryCurrencyCode,
+            primaryCurrencyCode: currency,
+            date: date
+        )
         transaction.date = date
         transaction.id = UUID()
 
@@ -1100,6 +1219,61 @@ struct TransactionView: View {
         try? moc.save()
 
         dismiss()
+    }
+
+    private func refreshCurrencyMetadataAfterAmountEdit(for transaction: Transaction, editedAmount: Double) {
+        guard editedAmount > 0, editedAmount.isFinite else {
+            return
+        }
+
+        let rate = transaction.exchangeRate
+        guard rate > 0, rate.isFinite else {
+            dataController.applyManualUSDEquivalent(to: transaction, amount: editedAmount, currencyCode: currency, date: transaction.wrappedDate)
+            return
+        }
+
+        guard let originalCurrency = normalizedCurrencyCode(transaction.originalCurrency),
+              let convertedCurrency = normalizedCurrencyCode(transaction.convertedCurrency),
+              let primaryCurrency = normalizedCurrencyCode(currency),
+              originalCurrency != convertedCurrency,
+              [originalCurrency, convertedCurrency].contains("USD"),
+              [originalCurrency, convertedCurrency].contains("UYU") else {
+            return
+        }
+
+        if originalCurrency == primaryCurrency,
+           let linkedAmount = linkedAmount(from: editedAmount, sourceCurrency: originalCurrency, targetCurrency: convertedCurrency, rate: rate) {
+            transaction.originalAmount = editedAmount
+            transaction.convertedAmount = linkedAmount
+            return
+        }
+
+        if convertedCurrency == primaryCurrency,
+           let linkedAmount = linkedAmount(from: editedAmount, sourceCurrency: convertedCurrency, targetCurrency: originalCurrency, rate: rate) {
+            transaction.convertedAmount = editedAmount
+            transaction.originalAmount = linkedAmount
+        }
+    }
+
+    private func normalizedCurrencyCode(_ rawValue: String?) -> String? {
+        guard let currency = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
+              !currency.isEmpty else {
+            return nil
+        }
+
+        return currency
+    }
+
+    private func linkedAmount(from amount: Double, sourceCurrency: String, targetCurrency: String, rate: Double) -> Double? {
+        if sourceCurrency == "UYU" && targetCurrency == "USD" {
+            return amount / rate
+        }
+
+        if sourceCurrency == "USD" && targetCurrency == "UYU" {
+            return amount * rate
+        }
+
+        return nil
     }
 
     init(toEdit: Transaction? = nil) {

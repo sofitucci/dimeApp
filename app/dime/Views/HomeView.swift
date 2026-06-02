@@ -333,6 +333,14 @@ struct HomeView: View {
     private func handleExternalTransactionImport(_ url: URL) {
         do {
             let preview = try ExternalTransactionImporter.previewBatch(from: url, dataController: dataController)
+            guard preview.hasActionableImports else {
+                confirmedExternalImportBatch = nil
+                confirmedExternalImportURL = nil
+                externalImportMessage = "No new Hermes expenses to import."
+                showExternalImportAlert = true
+                return
+            }
+
             confirmedExternalImportBatch = nil
             confirmedExternalImportURL = url
             externalImportMessage = preview.message
@@ -347,10 +355,10 @@ struct HomeView: View {
         do {
             let preview = try ExternalTransactionImporter.previewBatch(batch, dataController: dataController)
 
-            guard preview.total > 0 else {
+            guard preview.hasActionableImports else {
                 confirmedExternalImportBatch = nil
                 confirmedExternalImportURL = nil
-                externalImportMessage = "No pending Hermes expenses to import."
+                externalImportMessage = "No new Hermes expenses to import."
                 showExternalImportAlert = true
                 return
             }
@@ -367,19 +375,28 @@ struct HomeView: View {
 
     private func confirmExternalTransactionImport() {
         let result: ExternalTransactionImportResult
+        let shouldAcknowledgeHermesSync: Bool
 
         do {
             if let url = confirmedExternalImportURL {
                 confirmedExternalImportURL = nil
+                shouldAcknowledgeHermesSync = false
                 result = try ExternalTransactionImporter.importBatch(from: url, dataController: dataController)
             } else if let batch = confirmedExternalImportBatch {
                 confirmedExternalImportBatch = nil
+                shouldAcknowledgeHermesSync = true
                 result = try ExternalTransactionImporter.importBatch(batch, dataController: dataController)
             } else {
                 return
             }
 
             externalImportMessage = result.message
+            if shouldAcknowledgeHermesSync && !result.handledExternalIds.isEmpty {
+                let handledExternalIds = result.handledExternalIds
+                Task {
+                    try? await HermesTransactionSyncClient.acknowledgeImportedExternalIds(handledExternalIds)
+                }
+            }
         } catch {
             externalImportMessage = error.localizedDescription
         }

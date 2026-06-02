@@ -268,6 +268,8 @@ class DataController: ObservableObject {
         transaction.amount = amount
         transaction.date = date
         transaction.id = UUID()
+        let storedCurrency = DimeDefaults.shared.string(forKey: "currency") ?? Locale.current.currencyCode ?? "UYU"
+        applyManualUSDEquivalent(to: transaction, amount: amount, currencyCode: storedCurrency, date: date)
 
         let calendar = Calendar(identifier: .gregorian)
 
@@ -827,6 +829,142 @@ class DataController: ObservableObject {
         } else {
             return (abs(total), false)
         }
+    }
+
+    private func latestBHUUSDToUYUTransaction() -> Transaction? {
+        let fetchRequest: NSFetchRequest<Transaction> = Transaction.fetchRequest()
+        fetchRequest.fetchLimit = 1
+        fetchRequest.sortDescriptors = [
+            NSSortDescriptor(key: #keyPath(Transaction.exchangeRateDate), ascending: false),
+            NSSortDescriptor(key: #keyPath(Transaction.date), ascending: false)
+        ]
+
+        let ratePredicate = NSPredicate(format: "%K > 0", #keyPath(Transaction.exchangeRate))
+        let sourcePredicate = NSPredicate(format: "%K CONTAINS[cd] %@", #keyPath(Transaction.exchangeRateSource), "BHU")
+        let usdToUYUPredicate = NSCompoundPredicate(type: .and, subpredicates: [
+            NSPredicate(format: "%K ==[c] %@", #keyPath(Transaction.originalCurrency), "USD"),
+            NSPredicate(format: "%K ==[c] %@", #keyPath(Transaction.convertedCurrency), "UYU")
+        ])
+        let uyuToUSDPredicate = NSCompoundPredicate(type: .and, subpredicates: [
+            NSPredicate(format: "%K ==[c] %@", #keyPath(Transaction.originalCurrency), "UYU"),
+            NSPredicate(format: "%K ==[c] %@", #keyPath(Transaction.convertedCurrency), "USD")
+        ])
+        let currencyPairPredicate = NSCompoundPredicate(type: .or, subpredicates: [usdToUYUPredicate, uyuToUSDPredicate])
+
+        fetchRequest.predicate = NSCompoundPredicate(type: .and, subpredicates: [ratePredicate, sourcePredicate, currencyPairPredicate])
+
+        return results(for: fetchRequest).first
+    }
+
+    func getLatestBHUUSDToUYURate() -> Double? {
+        latestBHUUSDToUYUTransaction()?.exchangeRate
+    }
+
+    func manualPrimaryAmount(for amount: Double, entryCurrencyCode: String?, primaryCurrencyCode: String?) -> Double? {
+        guard amount > 0, amount.isFinite,
+              let entryCurrency = normalizedCurrencyCode(entryCurrencyCode),
+              let primaryCurrency = normalizedCurrencyCode(primaryCurrencyCode) else {
+            return nil
+        }
+
+        if entryCurrency == primaryCurrency {
+            return amount
+        }
+
+        guard let rate = getLatestBHUUSDToUYURate(), rate > 0, rate.isFinite else {
+            return nil
+        }
+
+        if entryCurrency == "USD", primaryCurrency == "UYU" {
+            return amount * rate
+        }
+
+        if entryCurrency == "UYU", primaryCurrency == "USD" {
+            return amount / rate
+        }
+
+        return nil
+    }
+
+    @discardableResult
+    func applyManualCurrencyEntry(to transaction: Transaction, enteredAmount: Double, entryCurrencyCode: String?, primaryCurrencyCode: String?, date: Date) -> Bool {
+        guard let primaryAmount = manualPrimaryAmount(for: enteredAmount, entryCurrencyCode: entryCurrencyCode, primaryCurrencyCode: primaryCurrencyCode),
+              let entryCurrency = normalizedCurrencyCode(entryCurrencyCode),
+              let primaryCurrency = normalizedCurrencyCode(primaryCurrencyCode) else {
+            return false
+        }
+
+        transaction.amount = primaryAmount
+        clearManualCurrencyMetadata(for: transaction)
+
+        if entryCurrency == primaryCurrency {
+            applyManualUSDEquivalent(to: transaction, amount: enteredAmount, currencyCode: primaryCurrency, date: date)
+            return true
+        }
+
+        guard let rateTransaction = latestBHUUSDToUYUTransaction() else {
+            return false
+        }
+
+        let rate = rateTransaction.exchangeRate
+        guard rate > 0, rate.isFinite else {
+            return false
+        }
+
+        transaction.originalAmount = enteredAmount
+        transaction.originalCurrency = entryCurrency
+        transaction.convertedAmount = primaryAmount
+        transaction.convertedCurrency = primaryCurrency
+        transaction.exchangeRate = rate
+        transaction.exchangeRateDate = rateTransaction.exchangeRateDate ?? date
+        transaction.exchangeRateSource = "Manual entry BHU estimate"
+        return true
+    }
+
+    func applyManualUSDEquivalent(to transaction: Transaction, amount: Double, currencyCode: String?, date: Date) {
+        guard amount > 0, amount.isFinite else {
+            return
+        }
+
+        guard let primaryCurrency = normalizedCurrencyCode(currencyCode), primaryCurrency == "UYU" else {
+            return
+        }
+
+        guard let rateTransaction = latestBHUUSDToUYUTransaction() else {
+            return
+        }
+
+        let rate = rateTransaction.exchangeRate
+        guard rate > 0, rate.isFinite else {
+            return
+        }
+
+        transaction.originalAmount = amount
+        transaction.originalCurrency = primaryCurrency
+        transaction.convertedAmount = amount / rate
+        transaction.convertedCurrency = "USD"
+        transaction.exchangeRate = rate
+        transaction.exchangeRateDate = rateTransaction.exchangeRateDate ?? date
+        transaction.exchangeRateSource = "Manual entry BHU estimate"
+    }
+
+    private func clearManualCurrencyMetadata(for transaction: Transaction) {
+        transaction.originalAmount = 0
+        transaction.originalCurrency = nil
+        transaction.convertedAmount = 0
+        transaction.convertedCurrency = nil
+        transaction.exchangeRate = 0
+        transaction.exchangeRateDate = nil
+        transaction.exchangeRateSource = nil
+    }
+
+    private func normalizedCurrencyCode(_ rawValue: String?) -> String? {
+        guard let currency = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
+              !currency.isEmpty else {
+            return nil
+        }
+
+        return currency
     }
 
     func getLineGraphDataNet(type: Int) -> [LineGraphDataPoint] {
@@ -1713,12 +1851,18 @@ struct ExternalTransactionImportItem: Decodable {
 
 struct ExternalTransactionImportResult {
     let created: Int
+    let updated: Int
     let skipped: Int
     let failures: [String]
+    let handledExternalIds: [String]
 
     var message: String {
         var lines = [String]()
         lines.append("Created \(created) transaction\(created == 1 ? "" : "s").")
+
+        if updated > 0 {
+            lines.append("Updated \(updated) existing transaction\(updated == 1 ? "" : "s").")
+        }
 
         if skipped > 0 {
             lines.append("Skipped \(skipped) duplicate\(skipped == 1 ? "" : "s").")
@@ -1740,13 +1884,22 @@ struct ExternalTransactionImportResult {
 struct ExternalTransactionImportPreview {
     let total: Int
     let ready: Int
+    let updated: Int
     let skipped: Int
     let failures: [String]
+
+    var hasActionableImports: Bool {
+        ready > 0 || updated > 0
+    }
 
     var message: String {
         var lines = [String]()
         lines.append("This link wants to import \(total) transaction\(total == 1 ? "" : "s").")
         lines.append("Ready: \(ready).")
+
+        if updated > 0 {
+            lines.append("Will update existing: \(updated).")
+        }
 
         if skipped > 0 {
             lines.append("Already imported: \(skipped).")
@@ -1864,38 +2017,7 @@ struct ExternalTransactionImporter {
 
         let importedIds = importedExternalIds()
         var ready = 0
-        var skipped = 0
-        var failures = [String]()
-
-        for (index, item) in batch.transactions.enumerated() {
-            let rowLabel = label(for: item, index: index)
-
-            do {
-                let prepared = try prepare(item, dataController: dataController)
-
-                if importedIds.contains(prepared.externalId) {
-                    skipped += 1
-                } else {
-                    ready += 1
-                }
-            } catch {
-                failures.append("\(rowLabel): \(error.localizedDescription)")
-            }
-        }
-
-        return ExternalTransactionImportPreview(total: batch.transactions.count, ready: ready, skipped: skipped, failures: failures)
-    }
-
-    static func importBatch(from url: URL, dataController: DataController) throws -> ExternalTransactionImportResult {
-        let batch = try batch(from: url)
-        return try importBatch(batch, dataController: dataController)
-    }
-
-    static func importBatch(_ batch: ExternalTransactionImportBatch, dataController: DataController) throws -> ExternalTransactionImportResult {
-        try validateBatchEnvelope(batch)
-
-        var importedIds = importedExternalIds()
-        var created = 0
+        var updated = 0
         var skipped = 0
         var failures = [String]()
 
@@ -1910,6 +2032,56 @@ struct ExternalTransactionImporter {
                     continue
                 }
 
+                if matchingImportedTransaction(for: prepared, item: item, dataController: dataController) != nil {
+                    updated += 1
+                    continue
+                }
+
+                ready += 1
+            } catch {
+                failures.append("\(rowLabel): \(error.localizedDescription)")
+            }
+        }
+
+        return ExternalTransactionImportPreview(total: batch.transactions.count, ready: ready, updated: updated, skipped: skipped, failures: failures)
+    }
+
+    static func importBatch(from url: URL, dataController: DataController) throws -> ExternalTransactionImportResult {
+        let batch = try batch(from: url)
+        return try importBatch(batch, dataController: dataController)
+    }
+
+    static func importBatch(_ batch: ExternalTransactionImportBatch, dataController: DataController) throws -> ExternalTransactionImportResult {
+        try validateBatchEnvelope(batch)
+
+        var importedIds = importedExternalIds()
+        var handledExternalIds = Set<String>()
+        var created = 0
+        var updated = 0
+        var skipped = 0
+        var failures = [String]()
+
+        for (index, item) in batch.transactions.enumerated() {
+            let rowLabel = label(for: item, index: index)
+
+            do {
+                let prepared = try prepare(item, dataController: dataController)
+
+                if importedIds.contains(prepared.externalId) {
+                    handledExternalIds.insert(prepared.externalId)
+                    skipped += 1
+                    continue
+                }
+
+                if let existingTransaction = matchingImportedTransaction(for: prepared, item: item, dataController: dataController) {
+                    apply(prepared, to: existingTransaction)
+                    dataController.save()
+                    importedIds.insert(prepared.externalId)
+                    handledExternalIds.insert(prepared.externalId)
+                    updated += 1
+                    continue
+                }
+
                 let transaction = dataController.newTransaction(
                     note: prepared.note,
                     category: prepared.category,
@@ -1921,22 +2093,11 @@ struct ExternalTransactionImporter {
                     delay: false
                 )
 
-                if let originalAmount = prepared.originalAmount {
-                    transaction.originalAmount = originalAmount
-                }
-                transaction.originalCurrency = prepared.originalCurrency
-                if let convertedAmount = prepared.convertedAmount {
-                    transaction.convertedAmount = convertedAmount
-                }
-                transaction.convertedCurrency = prepared.convertedCurrency
-                if let exchangeRate = prepared.exchangeRate {
-                    transaction.exchangeRate = exchangeRate
-                }
-                transaction.exchangeRateDate = prepared.exchangeRateDate
-                transaction.exchangeRateSource = prepared.exchangeRateSource
+                applyCurrencyMetadata(prepared, to: transaction)
                 dataController.save()
 
                 importedIds.insert(prepared.externalId)
+                handledExternalIds.insert(prepared.externalId)
                 created += 1
             } catch {
                 failures.append("\(rowLabel): \(error.localizedDescription)")
@@ -1945,7 +2106,13 @@ struct ExternalTransactionImporter {
 
         importDefaults().set(Array(importedIds).sorted(), forKey: importedIdsKey)
 
-        return ExternalTransactionImportResult(created: created, skipped: skipped, failures: failures)
+        return ExternalTransactionImportResult(
+            created: created,
+            updated: updated,
+            skipped: skipped,
+            failures: failures,
+            handledExternalIds: Array(handledExternalIds).sorted()
+        )
     }
 
     private static func validateBatchEnvelope(_ batch: ExternalTransactionImportBatch) throws {
@@ -1974,6 +2141,100 @@ struct ExternalTransactionImporter {
 
     private static func importDefaults() -> UserDefaults {
         return DimeDefaults.shared
+    }
+
+    private static func matchingImportedTransaction(for prepared: PreparedImportItem, item: ExternalTransactionImportItem, dataController: DataController) -> Transaction? {
+        let context = dataController.container.viewContext
+        let request: NSFetchRequest<Transaction> = Transaction.fetchRequest()
+        let lowerBound = prepared.date.addingTimeInterval(-1)
+        let upperBound = prepared.date.addingTimeInterval(1)
+        request.predicate = NSCompoundPredicate(type: .and, subpredicates: [
+            NSPredicate(format: "income = %d", prepared.income),
+            NSPredicate(format: "%K == %@", #keyPath(Transaction.category), prepared.category),
+            NSPredicate(format: "%K >= %@ AND %K <= %@", #keyPath(Transaction.date), lowerBound as CVarArg, #keyPath(Transaction.date), upperBound as CVarArg)
+        ])
+
+        guard let candidates = try? context.fetch(request), !candidates.isEmpty else {
+            return nil
+        }
+
+        let expectedNote = normalizedTransactionNote(importNote(prepared.note, category: prepared.category))
+        let candidateAmounts = matchingAmounts(for: item, prepared: prepared)
+        let noteAndAmountMatches = candidates.filter { transaction in
+            normalizedTransactionNote(transaction.wrappedNote) == expectedNote
+                && candidateAmounts.contains { amountsMatch(transaction.wrappedAmount, $0) }
+        }
+
+        if noteAndAmountMatches.count == 1 {
+            return noteAndAmountMatches.first
+        }
+
+        let amountOnlyMatches = candidates.filter { transaction in
+            candidateAmounts.contains { amountsMatch(transaction.wrappedAmount, $0) }
+        }
+
+        return amountOnlyMatches.count == 1 ? amountOnlyMatches.first : nil
+    }
+
+    private static func matchingAmounts(for item: ExternalTransactionImportItem, prepared: PreparedImportItem) -> [Double] {
+        let rawAmounts = [item.amount, prepared.amount, prepared.originalAmount, prepared.convertedAmount]
+        var amounts = [Double]()
+
+        for rawAmount in rawAmounts {
+            guard let amount = rawAmount, amount.isFinite else {
+                continue
+            }
+
+            if !amounts.contains(where: { amountsMatch($0, amount) }) {
+                amounts.append(amount)
+            }
+        }
+
+        return amounts
+    }
+
+    private static func amountsMatch(_ lhs: Double, _ rhs: Double) -> Bool {
+        abs(lhs - rhs) < 0.005
+    }
+
+    private static func normalizedTransactionNote(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func importNote(_ note: String, category: Category) -> String {
+        if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return category.wrappedName
+        }
+
+        return note.trimmingCharacters(in: .whitespaces)
+    }
+
+    private static func apply(_ prepared: PreparedImportItem, to transaction: Transaction) {
+        transaction.note = importNote(prepared.note, category: prepared.category)
+        transaction.category = prepared.category
+        transaction.income = prepared.income
+        transaction.amount = prepared.amount
+        transaction.date = prepared.date
+        transaction.onceRecurring = false
+        transaction.recurringType = 0
+        transaction.recurringCoefficient = 1
+
+        let calendar = Calendar(identifier: .gregorian)
+        transaction.day = calendar.date(bySettingHour: 0, minute: 0, second: 0, of: prepared.date) ?? Date.now
+        let dateComponents = calendar.dateComponents([.month, .year], from: prepared.date)
+        transaction.month = calendar.date(from: dateComponents) ?? Date.now
+
+        applyCurrencyMetadata(prepared, to: transaction)
+    }
+
+    private static func applyCurrencyMetadata(_ prepared: PreparedImportItem, to transaction: Transaction) {
+        transaction.originalAmount = prepared.originalAmount ?? 0
+        transaction.originalCurrency = prepared.originalCurrency
+        transaction.convertedAmount = prepared.convertedAmount ?? 0
+        transaction.convertedCurrency = prepared.convertedCurrency
+        transaction.exchangeRate = prepared.exchangeRate ?? 0
+        transaction.exchangeRateDate = prepared.exchangeRateDate
+        transaction.exchangeRateSource = prepared.exchangeRateSource
     }
 
     private static func prepare(_ item: ExternalTransactionImportItem, dataController: DataController) throws -> PreparedImportItem {
@@ -2315,6 +2576,30 @@ struct HermesTransactionSyncClient {
         return try decodeBatch(from: data)
     }
 
+    static func acknowledgeImportedExternalIds(_ externalIds: [String]) async throws {
+        let cleanedExternalIds = Array(Set(externalIds.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
+        guard !cleanedExternalIds.isEmpty else {
+            return
+        }
+
+        let importedURL = try importedEndpoint(from: configuredEndpoint())
+        var request = URLRequest(url: importedURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["externalIds": cleanedExternalIds], options: [])
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SyncError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw SyncError.httpStatus(httpResponse.statusCode)
+        }
+    }
+
     private static func configuredEndpoint() throws -> URL {
         if let storedURL = syncDefaults().string(forKey: syncURLKey), !storedURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return try validateEndpoint(storedURL)
@@ -2338,6 +2623,18 @@ struct HermesTransactionSyncClient {
             throw SyncError.insecureEndpoint
         }
 
+        return url
+    }
+
+    private static func importedEndpoint(from pendingURL: URL) throws -> URL {
+        guard var components = URLComponents(url: pendingURL, resolvingAgainstBaseURL: false) else {
+            throw SyncError.invalidEndpoint(pendingURL.absoluteString)
+        }
+
+        components.path = "/v1/dime/imported"
+        guard let url = components.url else {
+            throw SyncError.invalidEndpoint(pendingURL.absoluteString)
+        }
         return url
     }
 
