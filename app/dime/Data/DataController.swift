@@ -1832,6 +1832,7 @@ struct ExternalTransactionImportBatch: Decodable {
 
 struct ExternalTransactionImportItem: Decodable {
     let externalId: String
+    let sourceLabel: String?
     let date: String
     let amount: Double
     let type: String?
@@ -1927,6 +1928,7 @@ struct ExternalTransactionImporter {
 
     private struct PreparedImportItem {
         let externalId: String
+        let sourceLabel: String?
         let note: String
         let category: Category
         let income: Bool
@@ -2093,6 +2095,8 @@ struct ExternalTransactionImporter {
                     delay: false
                 )
 
+                transaction.externalImportId = prepared.externalId
+                transaction.externalSource = prepared.sourceLabel
                 applyCurrencyMetadata(prepared, to: transaction)
                 dataController.save()
 
@@ -2210,6 +2214,8 @@ struct ExternalTransactionImporter {
     }
 
     private static func apply(_ prepared: PreparedImportItem, to transaction: Transaction) {
+        transaction.externalImportId = prepared.externalId
+        transaction.externalSource = prepared.sourceLabel
         transaction.note = importNote(prepared.note, category: prepared.category)
         transaction.category = prepared.category
         transaction.income = prepared.income
@@ -2259,6 +2265,7 @@ struct ExternalTransactionImporter {
 
         return PreparedImportItem(
             externalId: externalId,
+            sourceLabel: sourceLabel(for: item, externalId: externalId),
             note: item.note ?? "",
             category: category,
             income: income,
@@ -2272,6 +2279,48 @@ struct ExternalTransactionImporter {
             exchangeRateDate: importDetails.exchangeRateDate,
             exchangeRateSource: importDetails.exchangeRateSource
         )
+    }
+
+    private static func sourceLabel(for item: ExternalTransactionImportItem, externalId: String) -> String? {
+        if let explicitLabel = item.sourceLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !explicitLabel.isEmpty {
+            return explicitLabel
+        }
+
+        return inferredSourceLabel(from: externalId)
+    }
+
+    private static func inferredSourceLabel(from externalId: String) -> String? {
+        let parts = externalId.split(separator: ":", maxSplits: 3).map(String.init)
+        guard parts.count >= 3, parts[0].lowercased() == "hermes" else {
+            return nil
+        }
+
+        let source = parts[1].lowercased()
+        let account = parts[2].lowercased()
+
+        switch source {
+        case "itau":
+            if account.contains("card") || account.contains("credit") {
+                return "Itaú credit"
+            }
+
+            if account.contains("debit") {
+                return "Itaú debit"
+            }
+
+            return "Itaú"
+        case "wise":
+            return "Wise"
+        case "santander":
+            return "Santander"
+        case "splitwise":
+            return "Splitwise"
+        case "manual":
+            return "Manual"
+        default:
+            return source.prefix(1).uppercased() + String(source.dropFirst())
+        }
     }
 
     private static func importAmountDetails(for item: ExternalTransactionImportItem) -> (

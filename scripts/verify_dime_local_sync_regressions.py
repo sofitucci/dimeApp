@@ -7,7 +7,8 @@ XCTest target. They guard the failure modes Sofia hit on-device:
 2. Hermes imports must match existing categories robustly without inventing new ones.
 3. Category add/edit sheets must leave enough room for the emoji keyboard.
 4. Transaction row swipe-to-delete must not steal vertical scroll gestures.
-5. Manual entries must get the same USD-equivalent metadata that imports get.
+5. Imported transactions should show a compact source indicator in the Log.
+6. Manual entries must get the same USD-equivalent metadata that imports get.
 """
 from __future__ import annotations
 
@@ -105,15 +106,22 @@ def main() -> None:
     )
     assert_true(
         (MODEL_DIR / "MainModel 2.xcdatamodel/contents").exists()
-        and (MODEL_DIR / "MainModel 3.xcdatamodel/contents").exists(),
-        "Keep both MainModel 2 and MainModel 3 in the model bundle so existing stores can migrate.",
+        and (MODEL_DIR / "MainModel 3.xcdatamodel/contents").exists()
+        and (MODEL_DIR / "MainModel 4.xcdatamodel/contents").exists(),
+        "Keep MainModel 2, 3, and 4 in the model bundle so existing stores can migrate.",
     )
     current_version = (MODEL_DIR / ".xccurrentversion").read_text()
     project_source = XCODE_PROJECT.read_text()
     assert_true(
-        "MainModel 3.xcdatamodel" in current_version
-        and "currentVersion = D6C0FFEE2E01010100F7F751 /* MainModel 3.xcdatamodel */;" in project_source,
-        "MainModel 3 must be the current model version while preserving prior model versions for migration.",
+        "MainModel 4.xcdatamodel" in current_version
+        and "currentVersion = D6C0FFEE2E01010200F7F751 /* MainModel 4.xcdatamodel */;" in project_source,
+        "MainModel 4 must be the current model version while preserving prior model versions for migration.",
+    )
+    main_model_4 = (MODEL_DIR / "MainModel 4.xcdatamodel/contents").read_text()
+    assert_true(
+        'attribute name="externalImportId"' in main_model_4
+        and 'attribute name="externalSource"' in main_model_4,
+        "Transaction model must persist the external import ID and human-readable source label.",
     )
 
     assert_true(
@@ -144,6 +152,17 @@ def main() -> None:
         and "prepared.originalAmount" in active
         and "prepared.convertedAmount" in active,
         "Duplicate Hermes matching must consider both old original amounts and new converted amounts for USD/UYU repairs.",
+    )
+    assert_true(
+        "let sourceLabel: String?" in active
+        and "transaction.externalImportId = prepared.externalId" in active
+        and "transaction.externalSource = prepared.sourceLabel" in active
+        and "inferredSourceLabel(from externalId" in active
+        and "Itaú credit" in active
+        and "Itaú debit" in active
+        and "Santander" in active
+        and "Wise" in active,
+        "Hermes imports must persist a source label inferred from the external ID for display in the transaction list.",
     )
     assert_true(
         "getLatestBHUUSDToUYURate" in active
@@ -187,6 +206,12 @@ def main() -> None:
     assert_true(
         "DragGesture(minimumDistance: rowSwipeMinimumDistance" in log_active,
         "Transaction row swipe-to-delete must use a minimum drag distance instead of starting on tiny diagonal scroll movement.",
+    )
+    assert_true(
+        "TransactionSourceIndicator" in log_active
+        and "transaction.externalSourceLabel" in log_active
+        and "Imported from" in log_active,
+        "Transaction rows must show a compact source indicator for Hermes-imported expenses.",
     )
     assert_true(
         "if value.translation.width < 0 {\n                        withAnimation {\n                            offset = value.translation.width" not in log_active,

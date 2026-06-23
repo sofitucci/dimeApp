@@ -1425,11 +1425,17 @@ struct SingleTransactionView: View {
                         .foregroundColor(future ? Color.SubtitleText : Color.PrimaryText)
                         .lineLimit(1)
 
-                    Text(getSubtitle())
-                        .font(.system(.subheadline, design: .rounded).weight(.medium))
-                        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
-                        .foregroundColor(future ? Color.EvenLighterText : Color.SubtitleText)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(getSubtitle())
+                            .font(.system(.subheadline, design: .rounded).weight(.medium))
+                            .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                            .foregroundColor(future ? Color.EvenLighterText : Color.SubtitleText)
+                            .lineLimit(1)
+
+                        if let sourceLabel = transaction.externalSourceLabel {
+                            TransactionSourceIndicator(label: sourceLabel, future: future)
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -1627,6 +1633,24 @@ func dateFormatter(date: Date) -> String {
 
     dateFormatter.dateFormat = "d MMM"
     return dateFormatter.string(from: date).uppercased()
+}
+
+struct TransactionSourceIndicator: View {
+    let label: String
+    let future: Bool
+
+    var body: some View {
+        Text(label)
+            .font(.system(.caption2, design: .rounded).weight(.semibold))
+            .dynamicTypeSize(...DynamicTypeSize.large)
+            .foregroundColor(future ? Color.EvenLighterText : Color.SubtitleText)
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.SecondaryBackground.opacity(future ? 0.55 : 1), in: Capsule())
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel("Imported from \(label)")
+    }
 }
 
 struct EmojiLogView: View {

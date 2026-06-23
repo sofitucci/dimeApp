@@ -24,6 +24,15 @@ extension Transaction {
         category?.wrappedName ?? ""
     }
 
+    var wrappedExternalSource: String {
+        externalSource?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    var externalSourceLabel: String? {
+        let label = wrappedExternalSource
+        return label.isEmpty ? nil : label
+    }
+
     var wrappedColour: String {
         category?.wrappedColour ?? ""
     }
