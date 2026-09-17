@@ -1294,16 +1294,27 @@ struct SingleTransactionView: View {
     @State private var offset: CGFloat = 0
     @State private var deleted: Bool = false
     @State private var deleteSwipeActive: Bool = false
+    @State private var shareSwipeActive: Bool = false
 
     private let rowSwipeMinimumDistance: CGFloat = 24
     private let rowSwipeAxisRatio: CGFloat = 1.6
 
+    // Both directions share `offset`, so these have to be sign-aware or a
+    // right-swipe would light up the delete affordance too.
     var deletePopup: Bool {
-        return abs(offset) > UIScreen.main.bounds.width * 0.2
+        return offset < 0 && abs(offset) > UIScreen.main.bounds.width * 0.2
     }
 
     var deleteConfirm: Bool {
-        return abs(offset) > UIScreen.main.bounds.width * 0.42
+        return offset < 0 && abs(offset) > UIScreen.main.bounds.width * 0.42
+    }
+
+    var sharePopup: Bool {
+        return offset > UIScreen.main.bounds.width * 0.2
+    }
+
+    private var canShareWithGianfranco: Bool {
+        !transaction.income && !DimeSplitwiseShareStore.isShared(transaction)
     }
 
     @GestureState var isDragging = false
@@ -1316,6 +1327,17 @@ struct SingleTransactionView: View {
         let vertical = abs(value.translation.height)
 
         return horizontal < -rowSwipeMinimumDistance && abs(horizontal) > vertical * rowSwipeAxisRatio
+    }
+
+    private func isShareSwipeIntent(_ value: DragGesture.Value) -> Bool {
+        guard canShareWithGianfranco else {
+            return false
+        }
+
+        let horizontal = value.translation.width
+        let vertical = abs(value.translation.height)
+
+        return horizontal > rowSwipeMinimumDistance && abs(horizontal) > vertical * rowSwipeAxisRatio
     }
 
     var imageSize: Double {
@@ -1368,6 +1390,24 @@ struct SingleTransactionView: View {
 
     var body: some View {
         ZStack(alignment: .trailing) {
+            if canShareWithGianfranco {
+                Image(systemName: "person.2.fill")
+                    .font(.system(.caption, design: .rounded).weight(.bold))
+                    .dynamicTypeSize(...DynamicTypeSize.xLarge)
+                    .foregroundColor(sharePopup ? Color.IncomeGreen : Color.SubtitleText)
+                    .padding(5)
+                    .background(
+                        sharePopup ? Color.IncomeGreen.opacity(0.23) : Color.SecondaryBackground, in: Circle()
+                    )
+                    .scaleEffect(sharePopup ? 1.1 : 1)
+                    .contentShape(Circle())
+                    .opacity(deleted ? 0 : 1)
+                    .padding(.horizontal, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .offset(x: -80)
+                    .offset(x: min(80, offset))
+            }
+
             Image(systemName: "xmark")
 //                .font(.system(size: 13, weight: .bold))
                 .font(.system(.caption, design: .rounded).weight(.bold))
@@ -1455,7 +1495,7 @@ struct SingleTransactionView: View {
                     }
                 }
 
-                if !transaction.income && !DimeSplitwiseShareStore.isShared(transaction) {
+                if canShareWithGianfranco {
                     Button {
                         showShareSheet = true
                     } label: {
@@ -1496,19 +1536,40 @@ struct SingleTransactionView: View {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             }
         }
+        .onChange(of: sharePopup) { _ in
+            if sharePopup {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        }
         .animation(.easeInOut, value: deletePopup)
+        .animation(.easeInOut, value: sharePopup)
         .simultaneousGesture(
             DragGesture(minimumDistance: rowSwipeMinimumDistance)
                 .updating($isDragging, body: { value, state, _ in
-                    state = deleteSwipeActive || isDeleteSwipeIntent(value)
+                    state = deleteSwipeActive || shareSwipeActive
+                        || isDeleteSwipeIntent(value) || isShareSwipeIntent(value)
                 })
                 .onChanged { value in
-                    if !deleteSwipeActive {
-                        guard isDeleteSwipeIntent(value) else {
+                    if !deleteSwipeActive && !shareSwipeActive {
+                        if isDeleteSwipeIntent(value) {
+                            deleteSwipeActive = true
+                        } else if isShareSwipeIntent(value) {
+                            shareSwipeActive = true
+                        } else {
+                            return
+                        }
+                    }
+
+                    if shareSwipeActive {
+                        guard value.translation.width > 0 else {
                             return
                         }
 
-                        deleteSwipeActive = true
+                        withAnimation {
+                            offset = value.translation.width
+                        }
+
+                        return
                     }
 
                     guard value.translation.width < 0 else {
@@ -1520,6 +1581,21 @@ struct SingleTransactionView: View {
                     }
                 }
                 .onEnded { _ in
+                    if shareSwipeActive {
+                        let shouldShare = sharePopup
+                        shareSwipeActive = false
+
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            offset = 0
+                        }
+
+                        if shouldShare {
+                            showShareSheet = true
+                        }
+
+                        return
+                    }
+
                     let shouldHandleDeleteSwipe = deleteSwipeActive
                     deleteSwipeActive = false
 
@@ -1578,8 +1654,9 @@ struct SingleTransactionView: View {
                 }
         )
         .onChange(of: isDragging) { _ in
-            if !isDragging && !deleted && deleteSwipeActive {
+            if !isDragging && !deleted && (deleteSwipeActive || shareSwipeActive) {
                 deleteSwipeActive = false
+                shareSwipeActive = false
                 withAnimation(.easeInOut(duration: 0.3)) {
                     offset = 0
                 }
@@ -1595,15 +1672,28 @@ struct SingleTransactionView: View {
             }
         }
         .sheet(isPresented: $showShareSheet) {
-            ShareWithGianfrancoSheet(
-                transaction: transaction,
-                currency: primaryCurrencyCode,
-                showCents: showCents,
-                isSharing: $isSharing,
-                errorMessage: $shareError,
-                onCancel: { showShareSheet = false },
-                onShare: shareWithGianfranco
-            )
+            if #available(iOS 16.0, *) {
+                ShareWithGianfrancoSheet(
+                    transaction: transaction,
+                    currency: primaryCurrencyCode,
+                    showCents: showCents,
+                    isSharing: $isSharing,
+                    errorMessage: $shareError,
+                    onCancel: { showShareSheet = false },
+                    onShare: shareWithGianfranco
+                )
+                .presentationDetents([.height(475)])
+            } else {
+                ShareWithGianfrancoSheet(
+                    transaction: transaction,
+                    currency: primaryCurrencyCode,
+                    showCents: showCents,
+                    isSharing: $isSharing,
+                    errorMessage: $shareError,
+                    onCancel: { showShareSheet = false },
+                    onShare: shareWithGianfranco
+                )
+            }
         }
     }
 
@@ -1700,6 +1790,8 @@ struct ShareWithGianfrancoSheet: View {
 
     @State private var sofiaPercent: Double = 50
 
+    private let presets: [Double] = [30, 40, 50]
+
     private var fullAmount: Double {
         let originalCurrency = (transaction.originalCurrency ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !originalCurrency.isEmpty && transaction.originalAmount > 0 {
@@ -1724,65 +1816,238 @@ struct ShareWithGianfrancoSheet: View {
         return formatter.string(from: NSNumber(value: amount)) ?? String(format: "%.2f", amount)
     }
 
+    private var yourShare: Double {
+        fullAmount * sofiaPercent / 100
+    }
+
+    private var theirShare: Double {
+        fullAmount * (100 - sofiaPercent) / 100
+    }
+
+    private func adjust(by delta: Double) {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            sofiaPercent = min(99, max(1, sofiaPercent + delta))
+        }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
     var body: some View {
-        NavigationView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text(transaction.wrappedNote)
-                    .font(.system(.headline, design: .rounded).weight(.semibold))
-                Text("Full amount \(formatted(fullAmount)) goes to Splitwise with you as the payer. Dime then keeps only your share.")
-                    .font(.system(.subheadline, design: .rounded))
-                    .foregroundColor(Color.SubtitleText)
+        VStack(spacing: 18) {
+            header
+            summary
+            shareSelector
+            breakdown
 
-                Text("Your share")
-                    .font(.system(.subheadline, design: .rounded).weight(.medium))
-                HStack {
-                    Slider(value: $sofiaPercent, in: 1...99, step: 1)
-                    Text("\(Int(sofiaPercent.rounded()))%")
-                        .font(.system(.body, design: .rounded).weight(.semibold))
-                        .frame(width: 52, alignment: .trailing)
-                }
+            if let errorMessage, !errorMessage.isEmpty {
+                Text(errorMessage)
+                    .font(.system(.footnote, design: .rounded).weight(.medium))
+                    .foregroundColor(Color.AlertRed)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+            }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("You keep \(formatted(fullAmount * sofiaPercent / 100))")
-                    Text("Gianfranco \(formatted(fullAmount * (100 - sofiaPercent) / 100))")
-                }
-                .font(.system(.subheadline, design: .rounded))
+            Spacer(minLength: 0)
+
+            shareButton
+        }
+        .padding(13)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color.PrimaryBackground)
+    }
+
+    private var header: some View {
+        HStack {
+            // Balances the close button so the title stays optically centred.
+            Color.clear
+                .frame(width: 44, height: 44)
+
+            Spacer()
+
+            Text("Share with Gianfranco")
+                .font(.system(.body, design: .rounded).weight(.semibold))
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 .foregroundColor(Color.PrimaryText)
 
-                if let errorMessage, !errorMessage.isEmpty {
-                    Text(errorMessage)
-                        .font(.system(.footnote, design: .rounded))
-                        .foregroundColor(Color.AlertRed)
+            Spacer()
+
+            closeButton
+        }
+    }
+
+    // Same look as ToolbarButton, wrapped in a 44pt hit target.
+    private var closeButton: some View {
+        Button(action: onCancel) {
+            Circle()
+                .fill(Color.SecondaryBackground)
+                .frame(width: 33, height: 33)
+                .overlay {
+                    Image(systemName: "xmark")
+                        .font(.system(.callout, design: .rounded).weight(.semibold))
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                        .foregroundColor(Color.SubtitleText)
+                        .offset(y: 0.8)
+                }
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isSharing)
+    }
+
+    private var summary: some View {
+        VStack(spacing: 3) {
+            Text(transaction.wrappedNote)
+                .font(.system(.subheadline, design: .rounded).weight(.medium))
+                .foregroundColor(Color.SubtitleText)
+                .lineLimit(1)
+
+            Text(formatted(fullAmount))
+                .font(.system(size: 34, weight: .medium, design: .rounded))
+                .foregroundColor(Color.PrimaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+        }
+    }
+
+    private var shareSelector: some View {
+        VStack(spacing: 10) {
+            Text("YOUR SHARE")
+                .font(.system(.caption2, design: .rounded).weight(.semibold))
+                .foregroundColor(Color.SubtitleText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 10) {
+                stepperButton(icon: "chevron.left", disabled: sofiaPercent <= 1) {
+                    adjust(by: -5)
                 }
 
-                Spacer()
-
-                Button {
-                    onShare(sofiaPercent)
-                } label: {
-                    HStack {
-                        if isSharing {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle())
-                        }
-                        Text(isSharing ? "Adding to Splitwise…" : "Add to Splitwise")
-                            .font(.system(.body, design: .rounded).weight(.semibold))
-                    }
+                // Filled, so the value reads as a display against the outlined controls.
+                Text("\(Int(sofiaPercent.rounded()))%")
+                    .font(.system(size: 25, weight: .semibold, design: .rounded))
+                    .foregroundColor(Color.PrimaryText)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                    .frame(height: 50)
+                    .background(
+                        Color.SecondaryBackground, in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    )
+
+                stepperButton(icon: "chevron.right", disabled: sofiaPercent >= 99) {
+                    adjust(by: 5)
                 }
-                .disabled(isSharing)
             }
-            .padding(20)
-            .navigationTitle("Share with Gianfranco")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
-                        .disabled(isSharing)
+
+            HStack(spacing: 8) {
+                ForEach(presets, id: \.self) { preset in
+                    presetChip(preset)
                 }
             }
         }
+    }
+
+    private func stepperButton(icon: String, disabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(.callout, design: .rounded).weight(.semibold))
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                .foregroundColor(Color.SubtitleText)
+                .frame(width: 50, height: 50)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color.PrimaryBackground)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(Color.Outline, lineWidth: 1.5)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .opacity(disabled ? 0.35 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled || isSharing)
+    }
+
+    private func presetChip(_ preset: Double) -> some View {
+        let selected = Int(sofiaPercent.rounded()) == Int(preset)
+
+        return Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                sofiaPercent = preset
+            }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        } label: {
+            Text("\(Int(preset))%")
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                .lineLimit(1)
+                .foregroundColor(selected ? Color.LightIcon : Color.SubtitleText)
+                .frame(maxWidth: .infinity)
+                .frame(height: 44)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(selected ? Color.DarkBackground : Color.PrimaryBackground)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(selected ? Color.clear : Color.Outline, lineWidth: 1.5)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(isSharing)
+    }
+
+    private var breakdown: some View {
+        VStack(spacing: 0) {
+            splitRow("You owe", amount: yourShare, emphasised: true)
+
+            Rectangle()
+                .fill(Color.Outline)
+                .frame(height: 1)
+
+            splitRow("Gianfranco", amount: theirShare, emphasised: false)
+        }
+        .padding(.horizontal, 14)
+        .background(Color.SecondaryBackground, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    private func splitRow(_ label: String, amount: Double, emphasised: Bool) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(.subheadline, design: .rounded).weight(.medium))
+                .foregroundColor(Color.SubtitleText)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            Text(formatted(amount))
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .foregroundColor(emphasised ? Color.PrimaryText : Color.SubtitleText)
+                .lineLimit(1)
+        }
+        .padding(.vertical, 11)
+    }
+
+    private var shareButton: some View {
+        Button {
+            onShare(sofiaPercent)
+        } label: {
+            HStack(spacing: 8) {
+                if isSharing {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: Color.LightIcon))
+                }
+
+                Text(isSharing ? "Adding to Splitwise…" : "Add to Splitwise")
+                    .font(.system(.title3, design: .rounded).weight(.semibold))
+                    .foregroundColor(Color.LightIcon)
+            }
+            .frame(height: 45)
+            .frame(maxWidth: .infinity)
+            .background(Color.DarkBackground, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(isSharing)
+        .opacity(isSharing ? 0.6 : 1)
     }
 }
 
