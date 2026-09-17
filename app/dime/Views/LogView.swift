@@ -1305,6 +1305,9 @@ struct SingleTransactionView: View {
     }
 
     @GestureState var isDragging = false
+    @State private var showShareSheet = false
+    @State private var isSharing = false
+    @State private var shareError: String?
 
     private func isDeleteSwipeIntent(_ value: DragGesture.Value) -> Bool {
         let horizontal = value.translation.width
@@ -1461,6 +1464,14 @@ struct SingleTransactionView: View {
                     }
                 }
 
+                if !transaction.income && !DimeSplitwiseShareStore.isShared(transaction) {
+                    Button {
+                        showShareSheet = true
+                    } label: {
+                        Label("Share with Gianfranco", systemImage: "person.2")
+                    }
+                }
+
                 Button {
                     transactionManager.toEdit = transaction
                 } label: {
@@ -1592,6 +1603,17 @@ struct SingleTransactionView: View {
 //                }
             }
         }
+        .sheet(isPresented: $showShareSheet) {
+            ShareWithGianfrancoSheet(
+                transaction: transaction,
+                currency: primaryCurrencyCode,
+                showCents: showCents,
+                isSharing: $isSharing,
+                errorMessage: $shareError,
+                onCancel: { showShareSheet = false },
+                onShare: shareWithGianfranco
+            )
+        }
     }
 
     func getSubtitle() -> String {
@@ -1612,6 +1634,61 @@ struct SingleTransactionView: View {
             }
         }
     }
+
+    private var shareAmount: Double {
+        let originalCurrency = (transaction.originalCurrency ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !originalCurrency.isEmpty && transaction.originalAmount > 0 {
+            return transaction.originalAmount
+        }
+        return transaction.displayAmount(in: primaryCurrencyCode)
+    }
+
+    private var shareCurrency: String {
+        let originalCurrency = (transaction.originalCurrency ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !originalCurrency.isEmpty && transaction.originalAmount > 0 {
+            return originalCurrency.uppercased()
+        }
+        return primaryCurrencyCode
+    }
+
+    private func shareWithGianfranco(sofiaPercent: Double) {
+        guard !isSharing else {
+            return
+        }
+        isSharing = true
+        shareError = nil
+        let request = HermesTransactionSyncClient.ShareRequest(
+            externalId: DimeSplitwiseShareStore.lookupKey(for: transaction),
+            description: transaction.wrappedNote,
+            amount: shareAmount,
+            currency: shareCurrency,
+            date: transaction.wrappedDate,
+            sofiaPercent: sofiaPercent
+        )
+        Task {
+            do {
+                let result = try await HermesTransactionSyncClient.shareExpense(request)
+                await MainActor.run {
+                    DimeSplitwiseShareStore.apply(
+                        sofiaShare: result.sofiaShare,
+                        fullAmount: request.amount,
+                        sofiaPercent: result.sofiaPercent,
+                        splitwiseId: result.splitwiseId,
+                        to: transaction,
+                        dataController: dataController
+                    )
+                    isSharing = false
+                    showShareSheet = false
+                    refreshID = UUID()
+                }
+            } catch {
+                await MainActor.run {
+                    isSharing = false
+                    shareError = error.localizedDescription
+                }
+            }
+        }
+    }
 }
 
 func dateFormatter(date: Date) -> String {
@@ -1619,6 +1696,103 @@ func dateFormatter(date: Date) -> String {
 
     dateFormatter.dateFormat = "d MMM"
     return dateFormatter.string(from: date).uppercased()
+}
+
+struct ShareWithGianfrancoSheet: View {
+    let transaction: Transaction
+    let currency: String
+    let showCents: Bool
+    @Binding var isSharing: Bool
+    @Binding var errorMessage: String?
+    let onCancel: () -> Void
+    let onShare: (Double) -> Void
+
+    @State private var sofiaPercent: Double = 50
+
+    private var fullAmount: Double {
+        let originalCurrency = (transaction.originalCurrency ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !originalCurrency.isEmpty && transaction.originalAmount > 0 {
+            return transaction.originalAmount
+        }
+        return transaction.displayAmount(in: currency)
+    }
+
+    private var shareCurrency: String {
+        let originalCurrency = (transaction.originalCurrency ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !originalCurrency.isEmpty && transaction.originalAmount > 0 {
+            return originalCurrency.uppercased()
+        }
+        return currency
+    }
+
+    private func formatted(_ amount: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = shareCurrency
+        formatter.maximumFractionDigits = showCents ? 2 : 0
+        return formatter.string(from: NSNumber(value: amount)) ?? String(format: "%.2f", amount)
+    }
+
+    var body: some View {
+        NavigationView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(transaction.wrappedNote)
+                    .font(.system(.headline, design: .rounded).weight(.semibold))
+                Text("Full amount \(formatted(fullAmount)) goes to Splitwise with you as the payer. Dime then keeps only your share.")
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundColor(Color.SubtitleText)
+
+                Text("Your share")
+                    .font(.system(.subheadline, design: .rounded).weight(.medium))
+                HStack {
+                    Slider(value: $sofiaPercent, in: 1...99, step: 1)
+                    Text("\(Int(sofiaPercent.rounded()))%")
+                        .font(.system(.body, design: .rounded).weight(.semibold))
+                        .frame(width: 52, alignment: .trailing)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("You keep \(formatted(fullAmount * sofiaPercent / 100))")
+                    Text("Gianfranco \(formatted(fullAmount * (100 - sofiaPercent) / 100))")
+                }
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundColor(Color.PrimaryText)
+
+                if let errorMessage, !errorMessage.isEmpty {
+                    Text(errorMessage)
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundColor(Color.AlertRed)
+                }
+
+                Spacer()
+
+                Button {
+                    onShare(sofiaPercent)
+                } label: {
+                    HStack {
+                        if isSharing {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle())
+                        }
+                        Text(isSharing ? "Adding to Splitwise…" : "Add to Splitwise")
+                            .font(.system(.body, design: .rounded).weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                }
+                .disabled(isSharing)
+            }
+            .padding(20)
+            .navigationTitle("Share with Gianfranco")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                        .disabled(isSharing)
+                }
+            }
+        }
+    }
 }
 
 struct TransactionSourceIndicator: View {

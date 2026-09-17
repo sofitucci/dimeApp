@@ -327,6 +327,14 @@ def main() -> None:
         and "remote-notification" not in info_text,
         "Hermes ready pings must use local/in-app notifications and auto-import on tap, without APNs push.",
     )
+    assert_true(
+        "Share with Gianfranco" in log_active
+        and "shareExpense" in active
+        and "/v1/dime/share" in active
+        and "sofiaPercent" in active
+        and "DimeSplitwiseShareStore" in active,
+        "Log rows need a Share with Gianfranco action that posts a custom percent split back to Hermes.",
+    )
 
     print("Dime local sync regression checks passed.")
 

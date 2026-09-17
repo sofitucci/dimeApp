@@ -2584,6 +2584,61 @@ struct ExternalTransactionImporter {
     }
 }
 
+enum DimeSplitwiseShareStore {
+    private static let key = "dimeSplitwiseExpenseIds"
+
+    static func lookupKey(for transaction: Transaction) -> String {
+        let externalId = (transaction.externalImportId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !externalId.isEmpty {
+            return externalId
+        }
+        return transaction.objectID.uriRepresentation().absoluteString
+    }
+
+    static func splitwiseId(for transaction: Transaction) -> Int? {
+        let stored = DimeDefaults.shared.dictionary(forKey: key) as? [String: Any]
+        let value = stored?[lookupKey(for: transaction)]
+        if let number = value as? Int {
+            return number
+        }
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        if let text = value as? String, let number = Int(text) {
+            return number
+        }
+        return nil
+    }
+
+    static func isShared(_ transaction: Transaction) -> Bool {
+        splitwiseId(for: transaction) != nil
+    }
+
+    static func mark(_ transaction: Transaction, splitwiseId: Int) {
+        var stored = DimeDefaults.shared.dictionary(forKey: key) as? [String: Any] ?? [:]
+        stored[lookupKey(for: transaction)] = splitwiseId
+        DimeDefaults.shared.set(stored, forKey: key)
+    }
+
+    static func apply(sofiaShare: Double, fullAmount: Double, sofiaPercent: Double, splitwiseId: Int, to transaction: Transaction, dataController: DataController) {
+        let factor: Double
+        if fullAmount > 0 {
+            factor = sofiaShare / fullAmount
+        } else {
+            factor = sofiaPercent / 100
+        }
+        transaction.amount *= factor
+        if transaction.originalAmount > 0 {
+            transaction.originalAmount *= factor
+        }
+        if transaction.convertedAmount > 0 {
+            transaction.convertedAmount *= factor
+        }
+        mark(transaction, splitwiseId: splitwiseId)
+        dataController.save()
+    }
+}
+
 struct HermesTransactionSyncClient {
     private static let syncURLKey = "hermesSyncURL"
     private static let infoPlistSyncURLKey = "HermesSyncURL"
@@ -2601,6 +2656,7 @@ struct HermesTransactionSyncClient {
         case insecureEndpoint
         case httpStatus(Int)
         case invalidResponse
+        case shareFailed(String)
 
         var errorDescription: String? {
             switch self {
@@ -2614,7 +2670,39 @@ struct HermesTransactionSyncClient {
                 return "Hermes sync failed with status \(statusCode)."
             case .invalidResponse:
                 return "Hermes sync returned data Dime could not read."
+            case let .shareFailed(message):
+                return message
             }
+        }
+    }
+
+    private struct HermesShareResponse: Decodable {
+        let ok: Bool
+        let duplicate: Bool?
+        let splitwiseId: FlexibleJSONNumber
+        let sofiaShare: FlexibleJSONNumber
+        let gianfrancoShare: FlexibleJSONNumber
+        let sofiaPercent: FlexibleJSONNumber
+    }
+
+    private struct FlexibleJSONNumber: Decodable {
+        let value: Double
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let number = try? container.decode(Double.self) {
+                value = number
+                return
+            }
+            if let number = try? container.decode(Int.self) {
+                value = Double(number)
+                return
+            }
+            if let text = try? container.decode(String.self), let number = Double(text) {
+                value = number
+                return
+            }
+            throw SyncError.invalidResponse
         }
     }
 
@@ -2693,6 +2781,65 @@ struct HermesTransactionSyncClient {
         }
     }
 
+    struct ShareRequest {
+        let externalId: String
+        let description: String
+        let amount: Double
+        let currency: String
+        let date: Date
+        let sofiaPercent: Double
+    }
+
+    struct ShareResult {
+        let splitwiseId: Int
+        let sofiaShare: Double
+        let gianfrancoShare: Double
+        let sofiaPercent: Double
+        let duplicate: Bool
+    }
+
+    static func shareExpense(_ request: ShareRequest) async throws -> ShareResult {
+        let shareURL = try shareEndpoint(from: configuredEndpoint())
+        var urlRequest = URLRequest(url: shareURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.timeoutInterval = 60
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: [
+            "externalId": request.externalId,
+            "description": request.description,
+            "amount": request.amount,
+            "currency": request.currency,
+            "date": formatter.string(from: request.date),
+            "sofiaPercent": request.sofiaPercent,
+        ], options: [])
+
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SyncError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let message = payload["error"] as? String,
+               !message.isEmpty {
+                throw SyncError.shareFailed(message)
+            }
+            throw SyncError.httpStatus(httpResponse.statusCode)
+        }
+
+        let decoded = try JSONDecoder().decode(HermesShareResponse.self, from: data)
+        return ShareResult(
+            splitwiseId: Int(decoded.splitwiseId.value.rounded()),
+            sofiaShare: decoded.sofiaShare.value,
+            gianfrancoShare: decoded.gianfrancoShare.value,
+            sofiaPercent: decoded.sofiaPercent.value,
+            duplicate: decoded.duplicate ?? false
+        )
+    }
+
     private static func configuredEndpoint() throws -> URL {
         if let storedURL = syncDefaults().string(forKey: syncURLKey), !storedURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return try validateEndpoint(storedURL)
@@ -2725,6 +2872,18 @@ struct HermesTransactionSyncClient {
         }
 
         components.path = "/v1/dime/imported"
+        guard let url = components.url else {
+            throw SyncError.invalidEndpoint(pendingURL.absoluteString)
+        }
+        return url
+    }
+
+    private static func shareEndpoint(from pendingURL: URL) throws -> URL {
+        guard var components = URLComponents(url: pendingURL, resolvingAgainstBaseURL: false) else {
+            throw SyncError.invalidEndpoint(pendingURL.absoluteString)
+        }
+
+        components.path = "/v1/dime/share"
         guard let url = components.url else {
             throw SyncError.invalidEndpoint(pendingURL.absoluteString)
         }
