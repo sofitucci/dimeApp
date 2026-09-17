@@ -8,6 +8,7 @@
 import ConfettiSwiftUI
 import Foundation
 import SwiftUI
+import UserNotifications
 
 class OverallToastPresenter: ObservableObject {
     @Published var showToast: Bool = false
@@ -57,10 +58,13 @@ struct HomeView: View {
     @State private var showExternalImportConfirmation = false
     @State private var showHermesSyncConfigurationConfirmation = false
     @State private var isHermesSyncing = false
+    @State private var hermesReadyCount = 0
+    @State private var pendingHermesAutoImport = false
 
     @State var counter = 0
 
     @EnvironmentObject var tabBarManager: TabBarManager
+    @Environment(\.scenePhase) var scenePhase
 
     @State var showPopup = false
 
@@ -103,6 +107,20 @@ struct HomeView: View {
 
             CustomTabBar(currentTab: $currentTab, topEdge: topEdge, bottomEdge: bottomEdge, counter: $counter, launchAdd: launchAdd)
                 .offset(y: tabBarManager.hideTab ? (70 + bottomEdge) : 0)
+
+            if hermesReadyCount > 0 {
+                Button {
+                    syncHermesTransactions(autoImport: true)
+                } label: {
+                    Text(hermesReadyCount == 1 ? "1 Hermes expense ready — tap to import" : "\(hermesReadyCount) Hermes expenses ready — tap to import")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color.IncomeGreen, in: Capsule())
+                }
+                .padding(.bottom, 76 + bottomEdge)
+            }
 
             if showPopup {
                 Rectangle()
@@ -198,7 +216,22 @@ struct HomeView: View {
             if isUnlocked {
                 handlePendingHermesSyncConfiguration()
                 handlePendingExternalImport()
+                consumePendingHermesAutoImport()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .hermesAutoImportRequested)) { _ in
+            consumePendingHermesAutoImport()
+        }
+        .onChange(of: scenePhase) { newPhase in
+            if newPhase == .active {
+                AppDelegate.scheduleHermesRefresh()
+                refreshHermesReadyBanner()
+                consumePendingHermesAutoImport()
+            }
+        }
+        .onAppear {
+            refreshHermesReadyBanner()
+            consumePendingHermesAutoImport()
         }
         .alert("Import Dime Transactions?", isPresented: $showExternalImportConfirmation) {
             Button("Cancel", role: .cancel) {
@@ -300,13 +333,22 @@ struct HomeView: View {
     }
 
     private func syncHermesTransactions() {
+        syncHermesTransactions(autoImport: false)
+    }
+
+    private func syncHermesTransactions(autoImport: Bool) {
         guard !isHermesSyncing else {
             return
         }
 
         if appLockVM.isAppLockEnabled && !appLockVM.isAppUnLocked {
-            externalImportMessage = "Unlock Dime before syncing Hermes expenses."
-            showExternalImportAlert = true
+            if autoImport {
+                pendingHermesAutoImport = true
+                HermesSyncReadyMonitor.pendingAutoImport = true
+            } else {
+                externalImportMessage = "Unlock Dime before syncing Hermes expenses."
+                showExternalImportAlert = true
+            }
             return
         }
 
@@ -318,7 +360,11 @@ struct HomeView: View {
 
                 await MainActor.run {
                     isHermesSyncing = false
-                    handleExternalTransactionImport(batch)
+                    if autoImport {
+                        importHermesBatch(batch)
+                    } else {
+                        handleExternalTransactionImport(batch)
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -327,6 +373,54 @@ struct HomeView: View {
                     showExternalImportAlert = true
                 }
             }
+        }
+    }
+
+    private func consumePendingHermesAutoImport() {
+        guard HermesSyncReadyMonitor.pendingAutoImport || pendingHermesAutoImport else {
+            return
+        }
+
+        pendingHermesAutoImport = false
+        HermesSyncReadyMonitor.pendingAutoImport = false
+        syncHermesTransactions(autoImport: true)
+    }
+
+    private func refreshHermesReadyBanner() {
+        Task {
+            let count = await HermesSyncReadyMonitor.check(postNotificationIfBackground: false)
+            await MainActor.run {
+                hermesReadyCount = count
+            }
+        }
+    }
+
+    private func importHermesBatch(_ batch: ExternalTransactionImportBatch) {
+        do {
+            let preview = try ExternalTransactionImporter.previewBatch(batch, dataController: dataController)
+            guard preview.hasActionableImports else {
+                hermesReadyCount = 0
+                externalImportMessage = "No new Hermes expenses to import."
+                showExternalImportAlert = true
+                return
+            }
+
+            let result = try ExternalTransactionImporter.importBatch(batch, dataController: dataController)
+            hermesReadyCount = 0
+            HermesSyncReadyMonitor.pendingAutoImport = false
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [HermesSyncReadyMonitor.notificationId])
+            UIApplication.shared.applicationIconBadgeNumber = 0
+            externalImportMessage = result.message
+            showExternalImportAlert = true
+            if !result.handledExternalIds.isEmpty {
+                let handledExternalIds = result.handledExternalIds
+                Task {
+                    try? await HermesTransactionSyncClient.acknowledgeImportedExternalIds(handledExternalIds)
+                }
+            }
+        } catch {
+            externalImportMessage = error.localizedDescription
+            showExternalImportAlert = true
         }
     }
 

@@ -313,6 +313,21 @@ def main() -> None:
         "EmojiTextField must not auto-open the emoji keyboard before the user taps it.",
     )
 
+    app_delegate = (ROOT / "app/dime/AppDelegate.swift").read_text()
+    info_text = INFO_PLIST.read_text()
+    assert_true(
+        "enum HermesSyncReadyMonitor" in active
+        and "pendingAutoImport" in active
+        and "hermes-expenses-ready" in active
+        and "syncHermesTransactions(autoImport:" in home_active
+        and "importHermesBatch" in home_active
+        and "hermesAutoImportRequested" in app_delegate
+        and "BGAppRefreshTask" in app_delegate
+        and "com.sofitucci.dime.hermes-sync-refresh" in info_text
+        and "remote-notification" not in info_text,
+        "Hermes ready pings must use local/in-app notifications and auto-import on tap, without APNs push.",
+    )
+
     print("Dime local sync regression checks passed.")
 
 

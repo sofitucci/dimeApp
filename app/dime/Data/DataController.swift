@@ -8,6 +8,7 @@
 import CoreData
 import Foundation
 import SwiftUI
+import UserNotifications
 import WidgetKit
 
 enum DimeDefaults {
@@ -2753,6 +2754,72 @@ struct HermesTransactionSyncClient {
 
     private static func syncDefaults() -> UserDefaults {
         return DimeDefaults.shared
+    }
+}
+
+enum HermesSyncReadyMonitor {
+    static let notificationId = "hermes-expenses-ready"
+    static let autoImportKey = "hermesAutoImport"
+    private static let lastFingerprintKey = "hermesReadyFingerprint"
+    static var pendingAutoImport = false
+
+    static func actionableCount(in batch: ExternalTransactionImportBatch) throws -> Int {
+        let preview = try ExternalTransactionImporter.previewBatch(batch, dataController: DataController.shared)
+        return preview.ready + preview.updated
+    }
+
+    static func fingerprint(for batch: ExternalTransactionImportBatch) -> String {
+        batch.transactions.map(\.externalId).sorted().joined(separator: ",")
+    }
+
+    static func check(postNotificationIfBackground: Bool) async -> Int {
+        do {
+            let batch = try await HermesTransactionSyncClient.fetchPendingBatch()
+            let count = try await MainActor.run {
+                try actionableCount(in: batch)
+            }
+            let fingerprint = fingerprint(for: batch)
+
+            if count == 0 {
+                DimeDefaults.shared.set("", forKey: lastFingerprintKey)
+                UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [notificationId])
+                return 0
+            }
+
+            let appIsActive = await MainActor.run {
+                UIApplication.shared.applicationState == .active
+            }
+
+            if postNotificationIfBackground, !appIsActive {
+                let last = DimeDefaults.shared.string(forKey: lastFingerprintKey) ?? ""
+                if last != fingerprint {
+                    await notify(count: count)
+                    DimeDefaults.shared.set(fingerprint, forKey: lastFingerprintKey)
+                }
+            }
+
+            return count
+        } catch {
+            return 0
+        }
+    }
+
+    private static func notify(count: Int) async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        if settings.authorizationStatus == .notDetermined {
+            _ = try? await center.requestAuthorization(options: [.alert, .badge, .sound])
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Hermes expenses ready"
+        content.body = count == 1 ? "1 expense is ready. Tap to import." : "\(count) expenses are ready. Tap to import."
+        content.sound = .default
+        content.userInfo = [autoImportKey: true]
+        content.badge = NSNumber(value: count)
+
+        let request = UNNotificationRequest(identifier: notificationId, content: content, trigger: nil)
+        try? await center.add(request)
     }
 }
 
