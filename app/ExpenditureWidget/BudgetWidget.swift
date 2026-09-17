@@ -62,6 +62,7 @@ struct BudgetWidgetProvider: IntentTimelineProvider {
 
             let transactions = dataController.results(for: fetchRequest)
 
+            _ = dataController.getLatestUSDToUYURate()
             var holdingTotal = 0.0
 
             transactions.forEach { transaction in

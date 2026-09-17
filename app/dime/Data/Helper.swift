@@ -7,9 +7,86 @@
 
 import Foundation
 
+enum DimeCurrencyConversion {
+    static var cachedUSDToUYURate: Double?
+
+    static func normalizedCurrency(_ rawValue: String?) -> String? {
+        guard let currency = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
+              !currency.isEmpty else {
+            return nil
+        }
+
+        return currency
+    }
+
+    static func appCurrencyCode() -> String {
+        let stored = DimeDefaults.shared.string(forKey: "currency")?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if let stored, !stored.isEmpty {
+            return stored
+        }
+
+        return Locale.current.currencyCode?.uppercased() ?? "UYU"
+    }
+
+    static func refresh(from transactions: [Transaction]) {
+        let ranked = transactions.filter { $0.exchangeRate > 0 && $0.exchangeRate.isFinite }
+        guard let best = ranked.max(by: { lhs, rhs in
+            let left = lhs.exchangeRateDate ?? lhs.date ?? .distantPast
+            let right = rhs.exchangeRateDate ?? rhs.date ?? .distantPast
+            return left < right
+        }) else {
+            return
+        }
+
+        cachedUSDToUYURate = best.exchangeRate
+    }
+}
+
 extension Transaction {
     var wrappedAmount: Double {
-        amount
+        displayAmount(in: DimeCurrencyConversion.appCurrencyCode())
+    }
+
+    func displayAmount(in targetCurrency: String, fallbackUSDToUYURate: Double? = DimeCurrencyConversion.cachedUSDToUYURate) -> Double {
+        let target = DimeCurrencyConversion.normalizedCurrency(targetCurrency) ?? targetCurrency.uppercased()
+        let original = DimeCurrencyConversion.normalizedCurrency(originalCurrency)
+        let converted = DimeCurrencyConversion.normalizedCurrency(convertedCurrency)
+        let rowRate = exchangeRate > 0 && exchangeRate.isFinite ? exchangeRate : nil
+        let rate = rowRate ?? fallbackUSDToUYURate
+
+        if let original, original == target, originalAmount > 0, originalAmount.isFinite {
+            return originalAmount
+        }
+
+        if let converted, converted == target, convertedAmount > 0, convertedAmount.isFinite {
+            return convertedAmount
+        }
+
+        if let rate, rate > 0 {
+            if let original, originalAmount > 0, originalAmount.isFinite {
+                if original == "USD", target == "UYU" {
+                    return originalAmount * rate
+                }
+                if original == "UYU", target == "USD" {
+                    return originalAmount / rate
+                }
+            }
+
+            if let converted, convertedAmount > 0, convertedAmount.isFinite {
+                if converted == "USD", target == "UYU" {
+                    return convertedAmount * rate
+                }
+                if converted == "UYU", target == "USD" {
+                    return convertedAmount / rate
+                }
+            }
+
+            if target == "USD" {
+                return amount / rate
+            }
+        }
+
+        return amount
     }
 
     var wrappedDate: Date {

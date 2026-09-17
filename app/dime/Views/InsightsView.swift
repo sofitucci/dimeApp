@@ -139,7 +139,7 @@ struct HorizontalPieChartView: View {
         var holdingTotal = 0.0
 
         transactions.forEach { transaction in
-            holdingTotal += transaction.amount
+            holdingTotal += transaction.wrappedAmount
         }
 
         return holdingTotal

@@ -758,6 +758,7 @@ class DataController: ObservableObject {
     }
 
     func getShortcutInsights(type: Int, timeframe: Int, optionalIncome: Bool?, categories: [Category]) -> Double {
+        refreshCurrencyConversionCache()
         let fetchRequest = fetchRequestForLogView(type: timeframe, optionalIncome: optionalIncome, categoryFilters: categories)
         let allTransactions = results(for: fetchRequest)
 
@@ -765,10 +766,11 @@ class DataController: ObservableObject {
             var total = 0.0
 
             allTransactions.forEach { transaction in
+                let value = displayAmount(for: transaction)
                 if transaction.income {
-                    total += transaction.amount
+                    total += value
                 } else {
-                    total -= transaction.amount
+                    total -= value
                 }
             }
 
@@ -777,50 +779,54 @@ class DataController: ObservableObject {
             var total = 0.0
 
             allTransactions.forEach { transaction in
-                total += transaction.amount
+                total += displayAmount(for: transaction)
             }
 
             return total
         }
     }
 
-    func getLogViewTotalSpent(type: Int) -> Double {
+    func getLogViewTotalSpent(type: Int, currencyCode: String? = nil) -> Double {
+        refreshCurrencyConversionCache()
         let fetchRequest = fetchRequestForLogView(type: type, optionalIncome: false)
         let allTransactions = results(for: fetchRequest)
 
         var total = 0.0
 
         allTransactions.forEach { transaction in
-            total += transaction.amount
+            total += displayAmount(for: transaction, currencyCode: currencyCode)
         }
 
         return total
     }
 
-    func getLogViewTotalIncome(type: Int) -> Double {
+    func getLogViewTotalIncome(type: Int, currencyCode: String? = nil) -> Double {
+        refreshCurrencyConversionCache()
         let fetchRequest = fetchRequestForLogView(type: type, optionalIncome: true)
         let allTransactions = results(for: fetchRequest)
 
         var total = 0.0
 
         allTransactions.forEach { transaction in
-            total += transaction.amount
+            total += displayAmount(for: transaction, currencyCode: currencyCode)
         }
 
         return total
     }
 
-    func getLogViewTotalNet(type: Int) -> (value: Double, positive: Bool) {
+    func getLogViewTotalNet(type: Int, currencyCode: String? = nil) -> (value: Double, positive: Bool) {
+        refreshCurrencyConversionCache()
         let fetchRequest = fetchRequestForLogView(type: type, optionalIncome: nil)
         let allTransactions = results(for: fetchRequest)
 
         var total = 0.0
 
         allTransactions.forEach { transaction in
+            let value = displayAmount(for: transaction, currencyCode: currencyCode)
             if transaction.income {
-                total += transaction.amount
+                total += value
             } else {
-                total -= transaction.amount
+                total -= value
             }
         }
 
@@ -831,7 +837,7 @@ class DataController: ObservableObject {
         }
     }
 
-    private func latestBHUUSDToUYUTransaction() -> Transaction? {
+    private func latestUSDToUYURateTransaction() -> Transaction? {
         let fetchRequest: NSFetchRequest<Transaction> = Transaction.fetchRequest()
         fetchRequest.fetchLimit = 1
         fetchRequest.sortDescriptors = [
@@ -840,7 +846,12 @@ class DataController: ObservableObject {
         ]
 
         let ratePredicate = NSPredicate(format: "%K > 0", #keyPath(Transaction.exchangeRate))
-        let sourcePredicate = NSPredicate(format: "%K CONTAINS[cd] %@", #keyPath(Transaction.exchangeRateSource), "BHU")
+        let sourcePredicate = NSCompoundPredicate(type: .or, subpredicates: [
+            NSPredicate(format: "%K CONTAINS[cd] %@", #keyPath(Transaction.exchangeRateSource), "Itaú"),
+            NSPredicate(format: "%K CONTAINS[cd] %@", #keyPath(Transaction.exchangeRateSource), "Itau"),
+            NSPredicate(format: "%K CONTAINS[cd] %@", #keyPath(Transaction.exchangeRateSource), "LINK"),
+            NSPredicate(format: "%K CONTAINS[cd] %@", #keyPath(Transaction.exchangeRateSource), "BHU")
+        ])
         let usdToUYUPredicate = NSCompoundPredicate(type: .and, subpredicates: [
             NSPredicate(format: "%K ==[c] %@", #keyPath(Transaction.originalCurrency), "USD"),
             NSPredicate(format: "%K ==[c] %@", #keyPath(Transaction.convertedCurrency), "UYU")
@@ -856,8 +867,22 @@ class DataController: ObservableObject {
         return results(for: fetchRequest).first
     }
 
-    func getLatestBHUUSDToUYURate() -> Double? {
-        latestBHUUSDToUYUTransaction()?.exchangeRate
+    func getLatestUSDToUYURate() -> Double? {
+        let rate = latestUSDToUYURateTransaction()?.exchangeRate
+        if let rate, rate > 0, rate.isFinite {
+            DimeCurrencyConversion.cachedUSDToUYURate = rate
+        }
+        return rate ?? DimeCurrencyConversion.cachedUSDToUYURate
+    }
+
+    @discardableResult
+    func refreshCurrencyConversionCache() -> Double? {
+        getLatestUSDToUYURate()
+    }
+
+    private func displayAmount(for transaction: Transaction, currencyCode: String? = nil) -> Double {
+        let target = DimeCurrencyConversion.normalizedCurrency(currencyCode) ?? DimeCurrencyConversion.appCurrencyCode()
+        return transaction.displayAmount(in: target)
     }
 
     func manualPrimaryAmount(for amount: Double, entryCurrencyCode: String?, primaryCurrencyCode: String?) -> Double? {
@@ -871,7 +896,7 @@ class DataController: ObservableObject {
             return amount
         }
 
-        guard let rate = getLatestBHUUSDToUYURate(), rate > 0, rate.isFinite else {
+        guard let rate = getLatestUSDToUYURate(), rate > 0, rate.isFinite else {
             return nil
         }
 
@@ -902,7 +927,7 @@ class DataController: ObservableObject {
             return true
         }
 
-        guard let rateTransaction = latestBHUUSDToUYUTransaction() else {
+        guard let rateTransaction = latestUSDToUYURateTransaction() else {
             return false
         }
 
@@ -917,7 +942,7 @@ class DataController: ObservableObject {
         transaction.convertedCurrency = primaryCurrency
         transaction.exchangeRate = rate
         transaction.exchangeRateDate = rateTransaction.exchangeRateDate ?? date
-        transaction.exchangeRateSource = "Manual entry BHU estimate"
+        transaction.exchangeRateSource = "Manual entry Itaú LINK estimate"
         return true
     }
 
@@ -926,11 +951,11 @@ class DataController: ObservableObject {
             return
         }
 
-        guard let primaryCurrency = normalizedCurrencyCode(currencyCode), primaryCurrency == "UYU" else {
+        guard let primaryCurrency = normalizedCurrencyCode(currencyCode) else {
             return
         }
 
-        guard let rateTransaction = latestBHUUSDToUYUTransaction() else {
+        guard let rateTransaction = latestUSDToUYURateTransaction() else {
             return
         }
 
@@ -939,13 +964,23 @@ class DataController: ObservableObject {
             return
         }
 
-        transaction.originalAmount = amount
-        transaction.originalCurrency = primaryCurrency
-        transaction.convertedAmount = amount / rate
-        transaction.convertedCurrency = "USD"
+        if primaryCurrency == "UYU" {
+            transaction.originalAmount = amount
+            transaction.originalCurrency = primaryCurrency
+            transaction.convertedAmount = amount / rate
+            transaction.convertedCurrency = "USD"
+        } else if primaryCurrency == "USD" {
+            transaction.originalAmount = amount
+            transaction.originalCurrency = primaryCurrency
+            transaction.convertedAmount = amount * rate
+            transaction.convertedCurrency = "UYU"
+        } else {
+            return
+        }
+
         transaction.exchangeRate = rate
         transaction.exchangeRateDate = rateTransaction.exchangeRateDate ?? date
-        transaction.exchangeRateSource = "Manual entry BHU estimate"
+        transaction.exchangeRateSource = "Manual entry Itaú LINK estimate"
     }
 
     private func clearManualCurrencyMetadata(for transaction: Transaction) {
@@ -968,6 +1003,7 @@ class DataController: ObservableObject {
     }
 
     func getLineGraphDataNet(type: Int) -> [LineGraphDataPoint] {
+        refreshCurrencyConversionCache()
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date.now)
 
@@ -984,9 +1020,9 @@ class DataController: ObservableObject {
             for transaction in transactions {
                 if transaction.wrappedDate < changingDate {
                     if transaction.income {
-                        totalForDay += transaction.amount
+                        totalForDay += displayAmount(for: transaction)
                     } else {
-                        totalForDay -= transaction.amount
+                        totalForDay -= displayAmount(for: transaction)
                     }
                 } else {
                     let newData = LineGraphDataPoint(date: changingDate, amount: totalForDay)
@@ -1000,9 +1036,9 @@ class DataController: ObservableObject {
                     }
 
                     if transaction.income {
-                        totalForDay += transaction.amount
+                        totalForDay += displayAmount(for: transaction)
                     } else {
-                        totalForDay -= transaction.amount
+                        totalForDay -= displayAmount(for: transaction)
                     }
                 }
             }
@@ -1029,9 +1065,9 @@ class DataController: ObservableObject {
             for transaction in transactions {
                 if transaction.wrappedDate < changingDate {
                     if transaction.income {
-                        totalForDay += transaction.amount
+                        totalForDay += displayAmount(for: transaction)
                     } else {
-                        totalForDay -= transaction.amount
+                        totalForDay -= displayAmount(for: transaction)
                     }
                 } else {
                     let newData = LineGraphDataPoint(date: changingDate, amount: totalForDay)
@@ -1045,9 +1081,9 @@ class DataController: ObservableObject {
                     }
 
                     if transaction.income {
-                        totalForDay += transaction.amount
+                        totalForDay += displayAmount(for: transaction)
                     } else {
-                        totalForDay -= transaction.amount
+                        totalForDay -= displayAmount(for: transaction)
                     }
                 }
             }
@@ -1076,9 +1112,9 @@ class DataController: ObservableObject {
             for transaction in transactions {
                 if transaction.wrappedDate < changingDate {
                     if transaction.income {
-                        totalForDay += transaction.amount
+                        totalForDay += displayAmount(for: transaction)
                     } else {
-                        totalForDay -= transaction.amount
+                        totalForDay -= displayAmount(for: transaction)
                     }
                 } else {
                     let dataDate = calendar.date(byAdding: .day, value: -1, to: changingDate)!
@@ -1094,9 +1130,9 @@ class DataController: ObservableObject {
                     }
 
                     if transaction.income {
-                        totalForDay += transaction.amount
+                        totalForDay += displayAmount(for: transaction)
                     } else {
-                        totalForDay -= transaction.amount
+                        totalForDay -= displayAmount(for: transaction)
                     }
                 }
             }
@@ -1340,6 +1376,7 @@ class DataController: ObservableObject {
     }
 
     func getInsights(type: Int, date: Date, income: Bool) -> (amount: Double, maximum: Double, average: Double, numberOfDays: Int, dates: [Date], dateDictionary: [Date: Double]) {
+        refreshCurrencyConversionCache()
         let currentItemRequest: NSFetchRequest<Transaction> = fetchRequestForInsights(type: type, date: date, income: income)
         let currentTransactions = results(for: currentItemRequest)
 
@@ -1583,6 +1620,7 @@ class DataController: ObservableObject {
     }
 
     func getInsightsSummary(type: Int, date: Date) -> (spent: Double, income: Double, net: Double, positive: Bool, average: Double) {
+        refreshCurrencyConversionCache()
         let itemRequest: NSFetchRequest<Transaction> = fetchRequestForInsights(type: type, date: date)
         let currentTransactions = results(for: itemRequest)
 
@@ -1591,9 +1629,9 @@ class DataController: ObservableObject {
 
         currentTransactions.forEach { transaction in
             if transaction.income {
-                holdingIncome += transaction.amount
+                holdingIncome += displayAmount(for: transaction)
             } else {
-                holdingSpent += transaction.amount
+                holdingSpent += displayAmount(for: transaction)
             }
         }
 
@@ -1790,6 +1828,7 @@ class DataController: ObservableObject {
 //
             let transactions = results(for: itemRequest)
 
+            _ = getLatestUSDToUYURate()
             var holdingTotal = 0.0
             transactions.forEach { transaction in
                 holdingTotal += transaction.wrappedAmount
@@ -2300,7 +2339,11 @@ struct ExternalTransactionImporter {
         let account = parts[2].lowercased()
 
         switch source {
-        case "itau":
+        case "itau", "itau-yaco", "itau_yaco":
+            if account.contains("yaco") || source == "itau-yaco" || source == "itau_yaco" {
+                return "Itaú Yaco"
+            }
+
             if account.contains("card") || account.contains("credit") {
                 return "Itaú credit"
             }

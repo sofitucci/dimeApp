@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_CONTROLLER = ROOT / "app/dime/Data/DataController.swift"
+HELPER = ROOT / "app/dime/Data/Helper.swift"
 LOG_VIEW = ROOT / "app/dime/Views/LogView.swift"
 HOME_VIEW = ROOT / "app/dime/Views/HomeView.swift"
 TRANSACTION_VIEW = ROOT / "app/dime/Views/TransactionView.swift"
@@ -160,16 +161,19 @@ def main() -> None:
         and "inferredSourceLabel(from externalId" in active
         and "Itaú credit" in active
         and "Itaú debit" in active
+        and "Itaú Yaco" in active
         and "Santander" in active
         and "Wise" in active,
         "Hermes imports must persist a source label inferred from the external ID for display in the transaction list.",
     )
     assert_true(
-        "getLatestBHUUSDToUYURate" in active
+        "getLatestUSDToUYURate" in active
         and "exchangeRateSource" in active
+        and "Itaú" in active
+        and "BHU" in active
         and "USD" in active
         and "UYU" in active,
-        "DataController must expose the latest BHU USD/UYU rate from imported transaction metadata for approximate totals.",
+        "DataController must expose the latest Itaú LINK/BHU USD-UYU rate from imported transaction metadata for approximate totals.",
     )
 
     home_source = HOME_VIEW.read_text()
@@ -187,11 +191,38 @@ def main() -> None:
         "After a confirmed Hermes sync import, Dime must acknowledge handled external IDs so the server stops offering them in later refreshes.",
     )
 
+    helper_source = HELPER.read_text()
+    helper_active = active_swift(helper_source)
+    assert_true(
+        "func displayAmount(in" in helper_active
+        and "DimeCurrencyConversion" in helper_active
+        and "originalCurrency" in helper_active
+        and "convertedCurrency" in helper_active
+        and "fallbackUSDToUYURate" in helper_active
+        and "wrappedAmount" in helper_active
+        and "displayAmount(in: DimeCurrencyConversion.appCurrencyCode())" in helper_active,
+        "Transaction display amounts must convert pesos to USD using stored metadata instead of relabeling the stored amount.",
+    )
+    assert_true(
+        "displayAmount(for: transaction" in active
+        and "refreshCurrencyConversionCache" in active
+        and "currencyCode: String? = nil" in active
+        and "getLogViewTotalNet(type: Int, currencyCode" in active,
+        "Log/Insights totals must sum per-row converted amounts in the app currency.",
+    )
+    assert_true(
+        'primaryCurrency == "USD"' in active
+        and 'convertedCurrency = "UYU"' in active
+        and "amount * rate" in active,
+        "Manual USD-base entries must keep USD as the original amount and store a UYU conversion.",
+    )
+
     log_source = LOG_VIEW.read_text()
     log_active = active_swift(log_source)
     assert_true(
         "usdEquivalentText" in log_active
-        and "getLatestBHUUSDToUYURate" in log_active
+        and "getLogViewTotalNet(type: timeframe, currencyCode: \"USD\")" in log_active
+        and "transaction.displayAmount(in: primaryCurrencyCode)" in log_active
         and "approx. USD" in log_active
         and "insightsType == 1" in log_active,
         "Log net total must show an approximate USD equivalent only for the big net-total header.",
@@ -247,7 +278,7 @@ def main() -> None:
         and "return amount * rate" in active
         and "entryCurrency == \"UYU\", primaryCurrency == \"USD\"" in active
         and "return amount / rate" in active,
-        "DataController must convert manual entries between USD and UYU with the latest BHU USD/UYU rate.",
+        "DataController must convert manual entries between USD and UYU with the latest imported USD-UYU rate.",
     )
     assert_true(
         "func applyManualCurrencyEntry" in active
@@ -255,8 +286,8 @@ def main() -> None:
         and "transaction.originalCurrency = entryCurrency" in active
         and "transaction.convertedAmount = primaryAmount" in active
         and "transaction.convertedCurrency = primaryCurrency" in active
-        and "Manual entry BHU estimate" in active,
-        "DataController must persist the entered USD/UYU amount plus converted primary amount and BHU-rate metadata.",
+        and "Manual entry Itaú LINK estimate" in active,
+        "DataController must persist the entered USD/UYU amount plus converted primary amount and rate metadata.",
     )
     assert_true(
         "func applyManualUSDEquivalent" in active
@@ -264,7 +295,7 @@ def main() -> None:
         and "transaction.originalCurrency = primaryCurrency" in active
         and "transaction.convertedAmount = amount / rate" in active
         and "transaction.convertedCurrency = \"USD\"" in active,
-        "DataController must still apply a latest-BHU-rate USD equivalent to manually created non-USD transactions.",
+        "DataController must still apply a latest-rate USD equivalent to manually created non-USD transactions.",
     )
 
     category_source = CATEGORY_VIEW.read_text()

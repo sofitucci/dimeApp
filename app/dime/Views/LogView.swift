@@ -555,7 +555,7 @@ struct LogInsightsView: View {
             return nil
         }
 
-        guard let latestBHUUSDToUYURate = dataController.getLatestBHUUSDToUYURate(), latestBHUUSDToUYURate > 0 else {
+        guard dataController.getLatestUSDToUYURate() != nil else {
             return nil
         }
 
@@ -564,9 +564,9 @@ struct LogInsightsView: View {
         formatter.currencyCode = "USD"
         formatter.maximumFractionDigits = showCents ? 2 : 0
 
-        let equivalent = netTotal.value / latestBHUUSDToUYURate
-        let sign = netTotal.positive ? "+" : "-"
-        let formatted = formatter.string(from: NSNumber(value: equivalent)) ?? "$\(formatNumber(showCents: showCents, number: equivalent))"
+        let usdNet = dataController.getLogViewTotalNet(type: timeframe, currencyCode: "USD")
+        let sign = usdNet.positive ? "+" : "-"
+        let formatted = formatter.string(from: NSNumber(value: usdNet.value)) ?? "$\(formatNumber(showCents: showCents, number: usdNet.value))"
 
         return "approx. USD \(sign)\(formatted)"
     }
@@ -1346,44 +1346,30 @@ struct SingleTransactionView: View {
 
     var primaryCurrencyCode: String {
         let currentCurrency = currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        let originalCurrency = transaction.originalCurrency?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
-        let convertedCurrency = transaction.convertedCurrency?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
-
-        if !convertedCurrency.isEmpty,
-           abs(transaction.convertedAmount - transaction.amount) < 0.005 {
-            return convertedCurrency
-        }
-
-        if !originalCurrency.isEmpty,
-           abs(transaction.originalAmount - transaction.amount) < 0.005 {
-            return originalCurrency
-        }
-
-        return currentCurrency
+        return currentCurrency.isEmpty ? DimeCurrencyConversion.appCurrencyCode() : currentCurrency
     }
 
     var transactionAmountString: String {
-        signedAmount(formattedAmount(transaction.amount, currencyCode: primaryCurrencyCode))
+        signedAmount(formattedAmount(transaction.displayAmount(in: primaryCurrencyCode), currencyCode: primaryCurrencyCode))
     }
 
     var secondaryCurrencyAmountString: String? {
-        let originalCurrency = transaction.originalCurrency?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
-        let convertedCurrency = transaction.convertedCurrency?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
-        let currentCurrency = primaryCurrencyCode
-
-        if !originalCurrency.isEmpty,
-           originalCurrency != currentCurrency,
-           transaction.originalAmount > 0 {
-            return signedAmount(formattedAmount(transaction.originalAmount, currencyCode: originalCurrency))
+        let otherCurrency: String
+        if primaryCurrencyCode == "USD" {
+            otherCurrency = "UYU"
+        } else if primaryCurrencyCode == "UYU" {
+            otherCurrency = "USD"
+        } else {
+            return nil
         }
 
-        if !convertedCurrency.isEmpty,
-           convertedCurrency != currentCurrency,
-           transaction.convertedAmount > 0 {
-            return signedAmount(formattedAmount(transaction.convertedAmount, currencyCode: convertedCurrency))
+        let primaryAmount = transaction.displayAmount(in: primaryCurrencyCode)
+        let secondaryAmount = transaction.displayAmount(in: otherCurrency)
+        guard secondaryAmount > 0, abs(secondaryAmount - primaryAmount) >= 0.005 else {
+            return nil
         }
 
-        return nil
+        return signedAmount(formattedAmount(secondaryAmount, currencyCode: otherCurrency))
     }
 
     var body: some View {
