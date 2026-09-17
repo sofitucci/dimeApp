@@ -965,7 +965,7 @@ struct TransactionView: View {
                         entryCurrencyCode = currencyCode
                     }
                 } label: {
-                    Text("\(currencySymbol(for: currencyCode)) \(currencyCode)")
+                    Text(currencyPickerLabel(for: currencyCode))
                         .font(.system(.caption, design: .rounded).weight(.semibold))
                         .lineLimit(1)
                         .padding(.vertical, 6)
@@ -985,6 +985,18 @@ struct TransactionView: View {
 
     private func currencySymbol(for currencyCode: String) -> String {
         Locale.current.localizedCurrencySymbol(forCurrencyCode: currencyCode) ?? currencyCode
+    }
+
+    private func currencyPickerLabel(for currencyCode: String) -> String {
+        let symbol = currencySymbol(for: currencyCode)
+
+        // Locales without a distinct glyph fall back to the code itself
+        // (UYU in en_US), which would otherwise read "UYU UYU".
+        guard symbol.caseInsensitiveCompare(currencyCode) != .orderedSame else {
+            return currencyCode
+        }
+
+        return "\(symbol) \(currencyCode)"
     }
 
     private func initialEntryCurrencyCode(for transaction: Transaction? = nil) -> String {
