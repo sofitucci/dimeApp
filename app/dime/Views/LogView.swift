@@ -479,7 +479,7 @@ struct LogInsightsView: View {
     }
 
     var netTotal: (value: Double, positive: Bool) {
-        dataController.getLogViewTotalNet(type: timeframe)
+        dataController.getLogViewTotalNet(type: timeframe, currencyCode: currencyCode)
     }
 
     var range: Int {
@@ -513,11 +513,11 @@ struct LogInsightsView: View {
     }
 
     var totalSpent: Double {
-        return dataController.getLogViewTotalSpent(type: timeframe)
+        return dataController.getLogViewTotalSpent(type: timeframe, currencyCode: currencyCode)
     }
 
     var totalIncome: Double {
-        return dataController.getLogViewTotalIncome(type: timeframe)
+        return dataController.getLogViewTotalIncome(type: timeframe, currencyCode: currencyCode)
     }
 
     var lineGraphData: [LineGraphDataPoint] {
@@ -1130,7 +1130,7 @@ struct ListView: View {
             numberFormatter.maximumFractionDigits = 0
         }
 
-        let total = dayTotal(dayTransaction: filtered)
+        let total = dayTotal(dayTransaction: filtered, currencyCode: currency)
 
         let text: String
 
@@ -1206,11 +1206,13 @@ struct FutureListView: View {
 
         var total = 0.0
 
+        let currencyCode = currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         transactions.forEach { transaction in
+            let value = transaction.displayAmount(in: currencyCode.isEmpty ? DimeCurrencyConversion.appCurrencyCode() : currencyCode)
             if transaction.income {
-                total += transaction.amount
+                total += value
             } else {
-                total -= transaction.amount
+                total -= value
             }
         }
 
@@ -1357,22 +1359,11 @@ struct SingleTransactionView: View {
     }
 
     var secondaryCurrencyAmountString: String? {
-        let otherCurrency: String
-        if primaryCurrencyCode == "USD" {
-            otherCurrency = "UYU"
-        } else if primaryCurrencyCode == "UYU" {
-            otherCurrency = "USD"
-        } else {
+        guard let secondary = transaction.secondaryDisplayAmount(in: primaryCurrencyCode) else {
             return nil
         }
 
-        let primaryAmount = transaction.displayAmount(in: primaryCurrencyCode)
-        let secondaryAmount = transaction.displayAmount(in: otherCurrency)
-        guard secondaryAmount > 0, abs(secondaryAmount - primaryAmount) >= 0.005 else {
-            return nil
-        }
-
-        return signedAmount(formattedAmount(secondaryAmount, currencyCode: otherCurrency))
+        return signedAmount(formattedAmount(secondary.amount, currencyCode: secondary.currencyCode))
     }
 
     var body: some View {
@@ -2618,14 +2609,17 @@ func timeConverterAccessibilityLabel(date: Date) -> String {
     return dateFormatter.string(from: date)
 }
 
-func dayTotal(dayTransaction: [Transaction]) -> Double {
+func dayTotal(dayTransaction: [Transaction], currencyCode: String = DimeCurrencyConversion.appCurrencyCode()) -> Double {
     var total = 0.0
+    let target = currencyCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    let resolved = target.isEmpty ? DimeCurrencyConversion.appCurrencyCode() : target
 
     dayTransaction.forEach { transaction in
+        let value = transaction.displayAmount(in: resolved)
         if transaction.income {
-            total += transaction.amount
+            total += value
         } else {
-            total -= transaction.amount
+            total -= value
         }
     }
 

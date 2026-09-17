@@ -89,6 +89,25 @@ extension Transaction {
         return amount
     }
 
+    var nativeCurrencyCode: String? {
+        DimeCurrencyConversion.normalizedCurrency(originalCurrency)
+    }
+
+    func secondaryDisplayAmount(in primaryCurrency: String) -> (amount: Double, currencyCode: String)? {
+        let primary = DimeCurrencyConversion.normalizedCurrency(primaryCurrency) ?? primaryCurrency.uppercased()
+        guard let native = nativeCurrencyCode, native != primary else {
+            return nil
+        }
+
+        let nativeAmount = displayAmount(in: native)
+        let primaryAmount = displayAmount(in: primary)
+        guard nativeAmount > 0, nativeAmount.isFinite, abs(nativeAmount - primaryAmount) >= 0.005 else {
+            return nil
+        }
+
+        return (nativeAmount, native)
+    }
+
     var wrappedDate: Date {
         date ?? Date.now
     }

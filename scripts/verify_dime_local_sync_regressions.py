@@ -228,6 +228,14 @@ def main() -> None:
         "Log net total must show an approximate USD equivalent only for the big net-total header.",
     )
     assert_true(
+        "dayTotal(dayTransaction: filtered, currencyCode: currency)" in log_active
+        and "transaction.displayAmount(in: resolved)" in log_active
+        and "secondaryDisplayAmount(in: primaryCurrencyCode)" in log_active
+        and "nativeCurrencyCode" in helper_active
+        and "secondaryDisplayAmount(in primaryCurrency" in helper_active,
+        "Day totals must convert into the app currency, and peso subtitles must only appear for UYU-native expenses.",
+    )
+    assert_true(
         "private func isDeleteSwipeIntent" in log_active
         and "rowSwipeMinimumDistance" in log_active
         and "rowSwipeAxisRatio" in log_active

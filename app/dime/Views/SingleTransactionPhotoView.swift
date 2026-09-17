@@ -80,7 +80,7 @@ struct SingleTransactionPhotoView: View {
             numberFormatter.maximumFractionDigits = 0
         }
 
-        return numberFormatter.string(from: NSNumber(value: transaction.amount)) ?? "$0"
+        return numberFormatter.string(from: NSNumber(value: transaction.displayAmount(in: currency))) ?? "$0"
     }
 
     var body: some View {
