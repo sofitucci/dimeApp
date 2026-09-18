@@ -65,6 +65,7 @@ struct LogView: View {
     var bottomEdge: CGFloat
     var launchSearch: Bool
     var isHermesSyncing: Bool = false
+    var hermesReadyCount: Int = 0
     var onHermesSync: () -> Void = {}
 
     // drag to open
@@ -118,6 +119,14 @@ struct LogView: View {
                     }
                     .foregroundColor(Color.DarkIcon)
                     .frame(width: 30, height: 30)
+                    .overlay(alignment: .topTrailing) {
+                        if hermesReadyCount > 0 && !isHermesSyncing {
+                            Circle()
+                                .fill(Color.IncomeGreen)
+                                .frame(width: 8, height: 8)
+                                .offset(x: 2, y: -2)
+                        }
+                    }
                     .contentShape(Rectangle())
                 }
                 .disabled(isHermesSyncing)
@@ -190,6 +199,14 @@ struct LogView: View {
                             }
                             .foregroundColor(Color.DarkIcon)
                             .frame(width: 30, height: 30)
+                            .overlay(alignment: .topTrailing) {
+                                if hermesReadyCount > 0 && !isHermesSyncing {
+                                    Circle()
+                                        .fill(Color.IncomeGreen)
+                                        .frame(width: 8, height: 8)
+                                        .offset(x: 2, y: -2)
+                                }
+                            }
                             .contentShape(Rectangle())
                         }
                         .disabled(isHermesSyncing)

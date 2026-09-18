@@ -343,6 +343,14 @@ def main() -> None:
         and "DimeSplitwiseShareStore" in active,
         "Log rows need a Share with Gianfranco action that posts a custom percent split back to Hermes.",
     )
+    assert_true(
+        "hermesReadyCount" in log_active
+        and "Color.IncomeGreen" in log_active
+        and "1 Hermes expense ready — tap to import" not in home_active
+        and "reportCategoryCorrection" in active
+        and "/v1/dime/category" in active,
+        "Pending Hermes items should badge the refresh icon, not a status-bar banner, and category edits should post back to Hermes.",
+    )
 
     print("Dime local sync regression checks passed.")
 

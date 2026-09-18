@@ -2840,6 +2840,35 @@ struct HermesTransactionSyncClient {
         )
     }
 
+    static func reportCategoryCorrection(externalId: String, merchant: String, category: String, previousCategory: String?) async {
+        let trimmedCategory = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedMerchant = merchant.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCategory.isEmpty, !trimmedMerchant.isEmpty, trimmedCategory.caseInsensitiveCompare("Revise") != .orderedSame else {
+            return
+        }
+
+        do {
+            let categoryURL = try categoryEndpoint(from: configuredEndpoint())
+            var request = URLRequest(url: categoryURL)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 20
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            var payload: [String: Any] = [
+                "externalId": externalId,
+                "merchant": trimmedMerchant,
+                "category": trimmedCategory,
+            ]
+            if let previousCategory, !previousCategory.isEmpty {
+                payload["previousCategory"] = previousCategory
+            }
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+            _ = try await URLSession.shared.data(for: request)
+        } catch {
+            return
+        }
+    }
+
     private static func configuredEndpoint() throws -> URL {
         if let storedURL = syncDefaults().string(forKey: syncURLKey), !storedURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return try validateEndpoint(storedURL)
@@ -2884,6 +2913,18 @@ struct HermesTransactionSyncClient {
         }
 
         components.path = "/v1/dime/share"
+        guard let url = components.url else {
+            throw SyncError.invalidEndpoint(pendingURL.absoluteString)
+        }
+        return url
+    }
+
+    private static func categoryEndpoint(from pendingURL: URL) throws -> URL {
+        guard var components = URLComponents(url: pendingURL, resolvingAgainstBaseURL: false) else {
+            throw SyncError.invalidEndpoint(pendingURL.absoluteString)
+        }
+
+        components.path = "/v1/dime/category"
         guard let url = components.url else {
             throw SyncError.invalidEndpoint(pendingURL.absoluteString)
         }

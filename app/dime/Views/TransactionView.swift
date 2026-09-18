@@ -1137,6 +1137,7 @@ struct TransactionView: View {
         generator.notificationOccurred(.success)
 
         if let editedTransaction = toEdit {
+            let previousCategory = editedTransaction.category?.wrappedName
             if note.trimmingCharacters(in: .whitespacesAndNewlines) == "" {
                 editedTransaction.note = category!.wrappedName
             } else {
@@ -1181,6 +1182,17 @@ struct TransactionView: View {
                     }
 
                     dataController.save()
+                    let learnedExternalId = editedTransaction.externalImportId ?? ""
+                    let learnedMerchant = editedTransaction.wrappedNote
+                    let learnedCategory = category?.wrappedName ?? ""
+                    Task {
+                        await HermesTransactionSyncClient.reportCategoryCorrection(
+                            externalId: learnedExternalId,
+                            merchant: learnedMerchant,
+                            category: learnedCategory,
+                            previousCategory: previousCategory
+                        )
+                    }
                 }
             }
 

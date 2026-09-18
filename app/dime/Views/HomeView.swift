@@ -83,6 +83,7 @@ struct HomeView: View {
                     bottomEdge: bottomEdge,
                     launchSearch: launchSearch,
                     isHermesSyncing: isHermesSyncing,
+                    hermesReadyCount: hermesReadyCount,
                     onHermesSync: syncHermesTransactions
                 )
                     .ignoresSafeArea(.all)
@@ -107,20 +108,6 @@ struct HomeView: View {
 
             CustomTabBar(currentTab: $currentTab, topEdge: topEdge, bottomEdge: bottomEdge, counter: $counter, launchAdd: launchAdd)
                 .offset(y: tabBarManager.hideTab ? (70 + bottomEdge) : 0)
-
-            if hermesReadyCount > 0 {
-                Button {
-                    syncHermesTransactions(autoImport: true)
-                } label: {
-                    Text(hermesReadyCount == 1 ? "1 Hermes expense ready — tap to import" : "\(hermesReadyCount) Hermes expenses ready — tap to import")
-                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(Color.IncomeGreen, in: Capsule())
-                }
-                .padding(.bottom, 76 + bottomEdge)
-            }
 
             if showPopup {
                 Rectangle()
