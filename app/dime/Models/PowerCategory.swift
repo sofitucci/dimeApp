@@ -36,6 +36,9 @@ struct SuggestedCategory: Hashable {
         let groceries = SuggestedCategory(name: "Groceries", emoji: "🛒")
         holding.append(groceries)
 
+        let coffee = SuggestedCategory(name: "Coffee", emoji: "☕")
+        holding.append(coffee)
+
         let family = SuggestedCategory(name: "Family", emoji: "👨‍👩‍👦")
         holding.append(family)
 

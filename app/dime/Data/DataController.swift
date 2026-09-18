@@ -2546,7 +2546,33 @@ struct ExternalTransactionImporter {
             throw ImportError.ambiguousCategory(categoryName)
         }
 
+        if let created = createHermesCategoryIfAllowed(named: categoryName, income: income, existing: categories, context: context) {
+            return created
+        }
+
         throw ImportError.categoryNotFound(categoryName)
+    }
+
+    private static let autoCreatedHermesCategories: [String: (emoji: String, colour: String)] = [
+        "coffee": ("☕", "#EC7A58"),
+        "revise": ("📝", "#6E7BF1"),
+    ]
+
+    private static func createHermesCategoryIfAllowed(named categoryName: String, income: Bool, existing: [Category], context: NSManagedObjectContext) -> Category? {
+        let normalizedName = normalizedCategoryName(categoryName)
+        guard let spec = autoCreatedHermesCategories[normalizedName] else {
+            return nil
+        }
+
+        let category = Category(context: context)
+        category.name = categoryName
+        category.emoji = spec.emoji
+        category.colour = spec.colour
+        category.income = income
+        category.id = UUID()
+        category.dateCreated = Date.now
+        category.order = (existing.map(\.order).max() ?? 0) + 1
+        return category
     }
 
     private static func normalizedCategoryName(_ value: String) -> String {
@@ -2844,6 +2870,9 @@ struct HermesTransactionSyncClient {
         let trimmedCategory = category.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedMerchant = merchant.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedCategory.isEmpty, !trimmedMerchant.isEmpty, trimmedCategory.caseInsensitiveCompare("Revise") != .orderedSame else {
+            return
+        }
+        if let previousCategory, previousCategory.caseInsensitiveCompare(trimmedCategory) == .orderedSame {
             return
         }
 

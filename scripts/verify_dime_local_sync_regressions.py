@@ -348,7 +348,9 @@ def main() -> None:
         and "Color.IncomeGreen" in log_active
         and "1 Hermes expense ready — tap to import" not in home_active
         and "reportCategoryCorrection" in active
-        and "/v1/dime/category" in active,
+        and "/v1/dime/category" in active
+        and "createHermesCategoryIfAllowed" in active
+        and 'SuggestedCategory(name: "Coffee"' in (ROOT / "app/dime/Models/PowerCategory.swift").read_text(),
         "Pending Hermes items should badge the refresh icon, not a status-bar banner, and category edits should post back to Hermes.",
     )
 
